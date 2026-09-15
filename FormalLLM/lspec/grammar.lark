@@ -1,0 +1,54 @@
+type: "bool" -> t_bool
+    | "nat" -> t_nat
+    | "int" -> t_int
+    | "float" -> t_float
+    | "char" -> t_char
+    | "array" type -> t_array
+
+spec: "Precondition:" definition "Postcondition:" definition
+
+definition: NAME? params* ":=" expr "."
+
+params: "(" NAME ":" type ")"
+
+?expr: logit
+    | logit "/\\" expr -> and_expr
+    | logit "\\/" expr -> or_expr
+    | "~" expr -> not_expr
+    | qexpr
+
+?qexpr: "forall" params+ expr -> forall_expr
+      | "exists" params+ expr -> exists_expr
+
+?logit: term
+     | term "<" logit -> lt_expr
+     | term "<=" logit -> le_expr
+     | term "=" logit -> eq_expr
+     | term ">" logit -> gt_expr
+     | term ">=" logit -> ge_expr
+     | term "<>" logit -> neq_expr
+
+?term: factor
+    | term "+" factor -> add_expr
+    | term "-" factor -> sub_expr
+
+?factor: atom
+      | factor "*" atom -> mul_expr
+      | factor "/" atom -> div_expr
+
+?atom: NUMBER -> number
+    | NAME -> name
+    | "true" -> true_const
+    | "false" -> false_const
+    | "-" expr -> neg_expr
+    | "(" expr ")"
+    | PREV_STATE -> prev_state
+    | NAME "[" atom "]" -> array_select
+    | NAME "[" atom ":" atom "]" -> array_slice
+
+PREV_STATE: NAME "0"
+NAME: /[a-zA-Z_][a-zA-Z0-9_]*/
+NUMBER: /-?\d+(\.\d+)?/
+
+%import common.WS
+%ignore WS
