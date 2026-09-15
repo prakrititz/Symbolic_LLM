@@ -3,7 +3,8 @@ from FormalLLM.lspec.parser import parse_spec
 from FormalLLM.refinement.engine import RefinementEngine
 from FormalLLM.llm.provider import MockProvider
 from FormalLLM.agent.refiner import AutomatedRefiner
-from FormalLLM.refinement.tree import RefinementNode
+from FormalLLM.refinement.graph.graph import RefinementGraph
+from FormalLLM.refinement.graph.status import NodeStatus
 
 def test_refiner_success():
     spec_str = """
@@ -27,11 +28,14 @@ def test_refiner_success():
     engine = RefinementEngine()
     refiner = AutomatedRefiner(engine, mock_llm)
     
-    root = RefinementNode(specification=spec)
-    result = refiner.refine_node(root)
+    graph = RefinementGraph(spec)
+    result = refiner.refine_node(graph, graph.root_id)
     
     assert result is True
-    assert root.refinement_operation == "assignment"
+    root = graph.nodes[graph.root_id]
+    
+    # Check that root was terminally refined
+    assert root.status == NodeStatus.REFINED
     assert root.program is not None
     assert root.program.variable == "x"
 
@@ -65,8 +69,8 @@ def test_refiner_feedback_loop():
     engine = RefinementEngine()
     refiner = AutomatedRefiner(engine, mock_llm)
     
-    root = RefinementNode(specification=spec)
-    result = refiner.refine_node(root)
+    graph = RefinementGraph(spec)
+    result = refiner.refine_node(graph, graph.root_id)
     
     assert result is True
     assert mock_llm.call_count == 2

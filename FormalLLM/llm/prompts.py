@@ -1,5 +1,5 @@
 from typing import List
-from FormalLLM.refinement.tree import RefinementNode
+from FormalLLM.refinement.graph.node import RefinementNode
 from FormalLLM.lspec.ast import *
 
 def to_string(node: ASTNode) -> str:

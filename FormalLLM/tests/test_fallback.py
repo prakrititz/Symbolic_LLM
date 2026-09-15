@@ -1,9 +1,11 @@
 import json
+import pytest
 from FormalLLM.lspec.parser import parse_spec
 from FormalLLM.refinement.engine import RefinementEngine
 from FormalLLM.llm.provider import MockProvider
-from FormalLLM.agent.refiner import AutomatedRefiner
-from FormalLLM.refinement.tree import RefinementNode
+from FormalLLM.agent.refiner import AutomatedRefiner, RefinementExhausted
+from FormalLLM.refinement.graph.graph import RefinementGraph
+from FormalLLM.refinement.graph.status import NodeStatus, AttemptStatus
 
 def test_fallback_mechanism():
     spec_str = """
@@ -12,78 +14,32 @@ def test_fallback_mechanism():
     """
     spec = parse_spec(spec_str)
     
-    # We want to test that a node abandons a law and falls back.
-    # We'll use a sequential law.
-    # The sequential law generates 2 children.
-    # We will make child 1 succeed, but child 2 completely fail up to max_retries.
-    # This should trigger a fallback at the parent, causing it to blacklist "sequential" and try another law.
-    # The parent will then try "assignment" and succeed.
-    
-    # Responses:
-    # 1. Parent chooses sequential
-    # 2. Child 1 (P->R) chooses skip (it succeeds trivially since we'll make P=R)
-    # 3. Child 2 (R->Q) chooses assignment but fails repeatedly (max_retries = 2).
-    # 4. Parent triggers fallback. "sequential" is blacklisted. Parent gets prompted again.
-    # 5. Parent chooses assignment directly and succeeds.
-    
     responses = [
-        # 1. Parent -> sequential
-        json.dumps({
-            "law": "sequential",
-            "parameters": {
-                "intermediate": "N >= 0" # R = P, so P->R is trivial
-            }
-        }),
-        # 2. Child 1 -> skip (P->R is N>=0 -> N>=0)
-        json.dumps({
-            "law": "skip",
-            "parameters": {}
-        }),
-        # 3. Child 2 -> assignment fail 1 (R->Q)
-        json.dumps({
-            "law": "assignment",
-            "parameters": {
-                "variable": "x",
-                "expr": "100"
-            }
-        }),
-        # 3. Child 2 -> assignment fail 2 (R->Q)
-        json.dumps({
-            "law": "assignment",
-            "parameters": {
-                "variable": "x",
-                "expr": "200"
-            }
-        }),
-        # 4. Parent fallbacks and is prompted again, sequential is blacklisted.
-        # Parent -> assignment success
-        json.dumps({
-            "law": "assignment",
-            "parameters": {
-                "variable": "x",
-                "expr": "0"
-            }
-        }),
+        json.dumps({"law": "sequential", "parameters": {"intermediate": "N >= 0"}}),
+        json.dumps({"law": "skip", "parameters": {}}),
+        json.dumps({"law": "assignment", "parameters": {"variable": "x", "expr": "100"}}),
+        json.dumps({"law": "assignment", "parameters": {"variable": "x", "expr": "200"}}),
+        json.dumps({"law": "assignment", "parameters": {"variable": "x", "expr": "0"}}),
     ]
     
     mock_llm = MockProvider(responses)
     engine = RefinementEngine()
     refiner = AutomatedRefiner(engine, mock_llm, max_retries=2)
     
-    root = RefinementNode(specification=spec)
-    result = refiner.refine_node(root)
+    graph = RefinementGraph(spec)
+    result = refiner.refine_node(graph, graph.root_id)
     
     assert result is True
-    # The final law at the root should be assignment, because sequential was abandoned
-    assert root.refinement_operation == "assignment"
-    assert len(root.children) == 0
+    root = graph.nodes[graph.root_id]
+    
+    # We should have a successful ACCEPTED attempt for assignment on the root
+    accepted_attempts = [graph.attempts[a_id] for a_id in root.attempts if graph.attempts[a_id].status == AttemptStatus.ACCEPTED]
+    assert len(accepted_attempts) == 1
+    assert accepted_attempts[0].law == "assignment"
     
     # Check that sequential is in the blacklist for the root node
-    assert "sequential" in refiner.blacklisted_laws_per_node[id(root)]
+    assert "sequential" in refiner.blacklisted_laws_per_node[graph.root_id]
 
-
-from FormalLLM.agent.refiner import RefinementFailure
-import pytest
 
 def test_fallback_discards_succeeded_sibling():
     spec_str = """
@@ -104,12 +60,16 @@ def test_fallback_discards_succeeded_sibling():
     engine = RefinementEngine()
     refiner = AutomatedRefiner(engine, mock_llm, max_retries=2)
     
-    root = RefinementNode(specification=spec)
-    result = refiner.refine_node(root)
+    graph = RefinementGraph(spec)
+    result = refiner.refine_node(graph, graph.root_id)
     
     assert result is True
-    assert root.refinement_operation == "assignment"
-    assert len(root.children) == 0
+    root = graph.nodes[graph.root_id]
+    
+    accepted_attempts = [graph.attempts[a_id] for a_id in root.attempts if graph.attempts[a_id].status == AttemptStatus.ACCEPTED]
+    assert len(accepted_attempts) == 1
+    assert accepted_attempts[0].law == "assignment"
+
 
 def test_fallback_root_failure():
     spec_str = """
@@ -118,22 +78,15 @@ def test_fallback_root_failure():
     """
     spec = parse_spec(spec_str)
     
-    # We will just repeatedly fail verification on an assignment until max_retries hits.
     responses = [
-        json.dumps({
-            "law": "assignment",
-            "parameters": {
-                "variable": "x",
-                "expr": "100"
-            }
-        })
+        json.dumps({"law": "assignment", "parameters": {"variable": "x", "expr": "100"}})
     ] * 5
     
     mock_llm = MockProvider(responses)
     engine = RefinementEngine()
     refiner = AutomatedRefiner(engine, mock_llm, max_retries=2)
     
-    root = RefinementNode(specification=spec)
+    graph = RefinementGraph(spec)
     
-    with pytest.raises(RefinementFailure):
-        refiner.refine_node(root)
+    with pytest.raises(RefinementExhausted):
+        refiner.refine_node(graph, graph.root_id)
