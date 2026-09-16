@@ -1,8 +1,9 @@
 from typing import List
 from FormalLLM.refinement.graph.node import RefinementNode
 from FormalLLM.lspec.ast import *
+from FormalLLM.lpl.ast import *
 
-def to_string(node: ASTNode) -> str:
+def to_string(node: ASTNode, compact: bool = False) -> str:
     if isinstance(node, BinaryOp):
         # Add parentheses for safety
         return f"({to_string(node.left)} {node.op} {to_string(node.right)})"
@@ -27,7 +28,20 @@ def to_string(node: ASTNode) -> str:
     elif isinstance(node, ArraySlice):
         return f"{node.array}[{to_string(node.start)}:{to_string(node.end)}]"
     elif isinstance(node, Spec):
-        return f"Precondition: {to_string(node.precondition)}\nPostcondition: {to_string(node.postcondition)}"
+        if compact:
+            return f"[{to_string(node.precondition.expr)}, {to_string(node.postcondition.expr)}]"
+        else:
+            return f"Precondition: {to_string(node.precondition)}\nPostcondition: {to_string(node.postcondition)}"
+    elif isinstance(node, Assignment):
+        return f"{node.variable} := {to_string(node.expr)}"
+    elif isinstance(node, Skip):
+        return "skip"
+    elif isinstance(node, SequentialComposition):
+        return f"{to_string(node.first, compact=True)} ;\n{to_string(node.second, compact=True)}"
+    elif isinstance(node, IfElse):
+        return f"if {to_string(node.guard)}:\n  {to_string(node.then_branch, compact=True)}\nelse:\n  {to_string(node.else_branch, compact=True)}"
+    elif isinstance(node, While):
+        return f"while {to_string(node.guard)}:\n  {to_string(node.body, compact=True)}"
     return str(node)
 
 def generate_state_prompt(node: RefinementNode, blacklisted_laws: List[str] = None, retry_context: str = "") -> str:

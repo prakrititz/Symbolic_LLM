@@ -1,10 +1,12 @@
 from dataclasses import dataclass
 from typing import List, Union
-from FormalLLM.lspec.ast import Expr
+from FormalLLM.lspec.ast import Expr, Spec, ASTNode
 
 @dataclass
-class ProgramNode:
+class ProgramNode(ASTNode):
     pass
+
+MixNode = Union[ProgramNode, Spec]
 
 @dataclass
 class Assignment(ProgramNode):
@@ -17,16 +19,16 @@ class Skip(ProgramNode):
 
 @dataclass
 class SequentialComposition(ProgramNode):
-    first: ProgramNode
-    second: ProgramNode
+    first: MixNode
+    second: MixNode
 
 @dataclass
 class IfElse(ProgramNode):
     guard: Expr
-    then_branch: ProgramNode
-    else_branch: ProgramNode
+    then_branch: MixNode
+    else_branch: MixNode
 
 @dataclass
 class While(ProgramNode):
     guard: Expr
-    body: ProgramNode
+    body: MixNode

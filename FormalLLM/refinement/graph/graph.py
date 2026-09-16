@@ -1,4 +1,4 @@
-from typing import Dict, List, Any, Optional
+from typing import Dict, List, Any, Optional, Union
 from FormalLLM.lspec.ast import Spec, ASTNode
 from FormalLLM.lpl.ast import SequentialComposition, IfElse, While
 from FormalLLM.refinement.graph.status import NodeStatus, AttemptStatus
@@ -83,6 +83,57 @@ class RefinementGraph:
                 return False
         return True
 
+    def reconstruct_mixed_program(self, node_id: Optional[str] = None) -> Union['ASTNode', Spec]:
+        if node_id is None:
+            node_id = self.root_id
+            
+        node = self.nodes[node_id]
+        if node.status == NodeStatus.REFINED:
+            return node.program
+            
+        if node.status in (NodeStatus.FAILED, NodeStatus.OPEN, NodeStatus.REFINING):
+            return node.specification
+            
+        # It's DELEGATED, find the accepted attempt
+        accepted_attempt = None
+        for attempt_id in node.attempts:
+            attempt = self.attempts[attempt_id]
+            if attempt.status == AttemptStatus.ACCEPTED:
+                accepted_attempt = attempt
+                break
+                
+        if not accepted_attempt:
+            return node.specification
+                
+        law = accepted_attempt.law
+        roles = accepted_attempt.destination_roles
+        
+        if law in ("sequential", "flexible_sequential"):
+            prog1 = self.reconstruct_mixed_program(roles["part1"])
+            prog2 = self.reconstruct_mixed_program(roles["part2"])
+            return SequentialComposition(prog1, prog2)
+            
+        elif law == "alternation":
+            guard = accepted_attempt.parameters["guard"]
+            then_prog = self.reconstruct_mixed_program(roles["then"])
+            else_prog = self.reconstruct_mixed_program(roles["else"])
+            return IfElse(guard, then_prog, else_prog)
+            
+        elif law == "iteration":
+            guard = accepted_attempt.parameters["guard"]
+            body_prog = self.reconstruct_mixed_program(roles["body"])
+            loop = While(guard, body_prog)
+            if "init" not in roles:
+                return loop
+            init_prog = self.reconstruct_mixed_program(roles["init"])
+            return SequentialComposition(init_prog, loop)
+            
+        elif law in ("strengthen_post", "weaken_pre"):
+            return self.reconstruct_mixed_program(roles["sub"])
+            
+        # Fallback for unrecognized recursive law
+        return node.specification
+
     def reconstruct_program(self, node_id: Optional[str] = None) -> ASTNode:
         if node_id is None:
             node_id = self.root_id
@@ -105,7 +156,7 @@ class RefinementGraph:
         law = accepted_attempt.law
         roles = accepted_attempt.destination_roles
         
-        if law == "sequential":
+        if law in ("sequential", "flexible_sequential"):
             prog1 = self.reconstruct_program(roles["part1"])
             prog2 = self.reconstruct_program(roles["part2"])
             return SequentialComposition(prog1, prog2)
@@ -124,5 +175,8 @@ class RefinementGraph:
                 return loop
             init_prog = self.reconstruct_program(roles["init"])
             return SequentialComposition(init_prog, loop)
+            
+        elif law in ("strengthen_post", "weaken_pre"):
+            return self.reconstruct_program(roles["sub"])
             
         raise ValueError(f"Cannot reconstruct unknown recursive law: {law}")
