@@ -105,12 +105,20 @@ def run_trial(case: Dict[str, Any],
               repeat: int,
               config_name: str,
               max_retries: int = 4,
-              budget: int = 30) -> Dict[str, Any]:
+              budget: int = 30,
+              law_set: Optional[List[str]] = None,
+              max_depth: int = 6) -> Dict[str, Any]:
     inst = InstrumentedProvider(provider, budget)
     spec = parse_spec(case["spec"])
     graph = RefinementGraph(spec)
     engine = RefinementEngine()
-    refiner = AutomatedRefiner(engine, inst, max_retries=max_retries)
+    if law_set is not None:
+        # Restrict the engine so the law set is the only variable between arms.
+        # The refiner reads engine.laws for both TOTAL_LAWS and the prompt, so
+        # filtering here removes the law from advertising, parsing and search.
+        engine.laws = {k: v for k, v in engine.laws.items() if k in law_set}
+    refiner = AutomatedRefiner(engine, inst, max_retries=max_retries,
+                               max_depth=max_depth)
 
     t0 = time.time()
     outcome = "UNKNOWN"
@@ -148,6 +156,7 @@ def run_trial(case: Dict[str, Any],
         outcome=outcome,
         detail=detail,
         program=program,
+        law_set=sorted(engine.laws),
         wall_s=round(wall, 2),
         llm_calls=len(calls),
         llm_time_s=round(sum(lat), 2),

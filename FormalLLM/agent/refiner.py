@@ -3,32 +3,52 @@ from FormalLLM.refinement.engine import RefinementEngine, VerificationError
 from FormalLLM.refinement.graph.graph import RefinementGraph
 from FormalLLM.refinement.graph.status import AttemptStatus, NodeStatus
 from FormalLLM.llm.provider import LLMProvider
-from FormalLLM.llm.prompts import generate_state_prompt
+from FormalLLM.llm.prompts import generate_state_prompt, to_string
 from FormalLLM.llm.parser import parse_llm_response
 
 class RefinementExhausted(Exception):
     pass
 
+
+def spec_key(spec) -> str:
+    """Canonical string form of a specification, used for progress checking."""
+    return to_string(spec)
+
 class AutomatedRefiner:
-    def __init__(self, engine: RefinementEngine, llm: LLMProvider, max_retries: int = 5):
+    def __init__(self, engine: RefinementEngine, llm: LLMProvider,
+                 max_retries: int = 5, max_depth: int = 6):
         self.engine = engine
         self.llm = llm
         self.max_retries = max_retries
+        # Structural laws that emit no proof obligations (alternation, sequential)
+        # can always be applied again, each time producing a syntactically new
+        # sub-specification. Nothing in the calculus bounds that descent, so the
+        # search needs an explicit depth limit; past it, only terminal laws
+        # (assignment / skip) may be used.
+        self.max_depth = max_depth
         self.blacklisted_laws_per_node: Dict[str, List[str]] = {}
         # Derive dynamically so this can't drift when new laws are registered
         self.TOTAL_LAWS = len(engine.laws)
 
-    def refine_node(self, graph: RefinementGraph, node_id: str) -> bool:
+    def refine_node(self, graph: RefinementGraph, node_id: str,
+                    ancestry: tuple = ()) -> bool:
         """
         Recursively attempts to refine a node in the graph.
         Returns True if successful, False if it needs to fallback to parent.
         Raises RefinementExhausted if it's the root node and all attempts are exhausted.
+
+        `ancestry` carries the canonical spec strings of this node's ancestors so
+        that a step which reproduces an ancestor specification can be rejected as
+        making no progress. Without it, identity-refinable laws such as
+        strengthen_post (with R = Q) or weaken_pre (with R = P) discharge their
+        obligations trivially and the search descends forever.
         """
         node = graph.nodes[node_id]
-        
+        path = ancestry + (spec_key(node.specification),)
+
         if node_id not in self.blacklisted_laws_per_node:
             self.blacklisted_laws_per_node[node_id] = []
-            
+
         retry_context = ""
         
         for attempt in range(self.max_retries):
@@ -40,7 +60,8 @@ class AutomatedRefiner:
             prompt = generate_state_prompt(
                 node, 
                 blacklisted_laws=self.blacklisted_laws_per_node[node_id],
-                retry_context=retry_context
+                retry_context=retry_context,
+                available_laws=list(self.engine.laws)
             )
             response = self.llm.generate(prompt)
             
@@ -69,6 +90,31 @@ class AutomatedRefiner:
                         node.program = result.program
                         return True
                     else:
+                        # Progress guard: a refinement step must yield strictly
+                        # new sub-specifications. Reproducing this node's own
+                        # spec, or any ancestor's, is a no-op that would recurse
+                        # forever.
+                        if len(path) > self.max_depth:
+                            attempt_obj.update_status(AttemptStatus.REJECTED)
+                            retry_context = (
+                                f"Maximum refinement depth ({self.max_depth}) reached. "
+                                f"'{law}' would split the specification further. You must "
+                                f"now discharge it directly with 'assignment' or 'skip'."
+                            )
+                            continue
+
+                        repeats = [spec_key(s) for s in result.sub_specs
+                                   if spec_key(s) in path]
+                        if repeats:
+                            attempt_obj.update_status(AttemptStatus.REJECTED)
+                            retry_context = (
+                                f"The law '{law}' made no progress: it produced a "
+                                f"sub-specification identical to one already being "
+                                f"refined ({repeats[0]}). Choose parameters that "
+                                f"strictly change the specification, or a different law."
+                            )
+                            continue
+
                         # Recursive branch (e.g. Sequential, Iteration)
                         roles = {}
                         if law == "sequential" or law == "flexible_sequential":
@@ -93,7 +139,7 @@ class AutomatedRefiner:
                         # Recursively refine all children
                         all_success = True
                         for child_id in roles.values():
-                            if not self.refine_node(graph, child_id):
+                            if not self.refine_node(graph, child_id, path):
                                 all_success = False
                                 break
                                 

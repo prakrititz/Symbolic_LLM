@@ -1,0 +1,289 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Benchmark Results Viewer</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'Segoe UI', sans-serif; background: #0f1117; color: #e2e8f0; min-height: 100vh; padding: 24px; }
+
+  h1 { font-size: 1.4rem; font-weight: 600; color: #a78bfa; margin-bottom: 4px; }
+  .subtitle { font-size: 0.8rem; color: #64748b; margin-bottom: 20px; }
+
+  .toolbar { display: flex; gap: 10px; align-items: center; margin-bottom: 20px; flex-wrap: wrap; }
+  .toolbar label { font-size: 0.85rem; color: #94a3b8; }
+  input[type=file] { color: #cbd5e1; font-size: 0.83rem; background: #1e2130; border: 1px solid #334155; border-radius: 6px; padding: 6px 10px; cursor: pointer; }
+  select, input[type=text] { background: #1e2130; border: 1px solid #334155; border-radius: 6px; color: #cbd5e1; font-size: 0.83rem; padding: 6px 10px; }
+  input[type=text] { width: 180px; }
+
+  /* Stats bar */
+  .stats { display: flex; gap: 16px; margin-bottom: 20px; flex-wrap: wrap; }
+  .stat { background: #1e2130; border: 1px solid #334155; border-radius: 8px; padding: 10px 16px; text-align: center; }
+  .stat .val { font-size: 1.5rem; font-weight: 700; }
+  .stat .lbl { font-size: 0.72rem; color: #64748b; margin-top: 2px; }
+  .stat.green .val { color: #4ade80; }
+  .stat.yellow .val { color: #facc15; }
+  .stat.red .val { color: #f87171; }
+  .stat.blue .val { color: #60a5fa; }
+
+  /* Table */
+  table { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
+  thead th { background: #1e2130; color: #94a3b8; text-align: left; padding: 8px 12px; border-bottom: 1px solid #334155; position: sticky; top: 0; z-index: 10; white-space: nowrap; }
+  tbody tr { border-bottom: 1px solid #1a1f2e; cursor: pointer; transition: background 0.1s; }
+  tbody tr:hover { background: #1e2130; }
+  td { padding: 7px 12px; vertical-align: middle; }
+
+  .badge { display: inline-block; font-size: 0.7rem; font-weight: 700; border-radius: 4px; padding: 2px 7px; letter-spacing: 0.04em; }
+  .badge.SUCCESS  { background: #14532d; color: #4ade80; }
+  .badge.BUDGET   { background: #422006; color: #facc15; }
+  .badge.EXHAUSTED{ background: #450a0a; color: #f87171; }
+  .badge.ERROR    { background: #450a0a; color: #f87171; }
+
+  .tier { display: inline-block; font-size: 0.7rem; background: #1e1b4b; color: #a78bfa; border-radius: 4px; padding: 2px 6px; font-weight: 600; }
+  .mono { font-family: monospace; font-size: 0.8rem; color: #93c5fd; }
+
+  /* Detail panel */
+  #detail { display: none; position: fixed; top: 0; right: 0; width: 480px; height: 100vh; background: #141821; border-left: 1px solid #334155; padding: 20px; overflow-y: auto; z-index: 100; font-size: 0.82rem; }
+  #detail h2 { font-size: 1rem; color: #a78bfa; margin-bottom: 12px; }
+  .close-btn { float: right; background: none; border: none; color: #64748b; font-size: 1.2rem; cursor: pointer; }
+  .close-btn:hover { color: #e2e8f0; }
+  .section { margin-bottom: 14px; }
+  .section-title { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.08em; color: #64748b; margin-bottom: 6px; }
+  .kv { display: flex; gap: 8px; margin-bottom: 4px; }
+  .kv .k { color: #64748b; min-width: 100px; }
+  .kv .v { color: #e2e8f0; font-family: monospace; }
+  .pill { display: inline-block; background: #1e2130; border: 1px solid #334155; border-radius: 12px; padding: 2px 8px; margin: 2px; font-size: 0.75rem; }
+  .pill.law { color: #67e8f9; }
+  .pill.err { color: #fca5a5; }
+  .program-box { background: #0f1117; border: 1px solid #334155; border-radius: 6px; padding: 10px; font-family: monospace; font-size: 0.8rem; color: #4ade80; white-space: pre-wrap; word-break: break-all; }
+  .error-list { max-height: 200px; overflow-y: auto; }
+  .error-item { background: #1a0a0a; border-left: 3px solid #ef4444; border-radius: 4px; padding: 6px 8px; margin-bottom: 4px; font-family: monospace; font-size: 0.74rem; color: #fca5a5; white-space: pre-wrap; word-break: break-all; }
+  .empty { color: #4ade80; font-size: 0.75rem; }
+
+  .table-wrap { overflow-x: auto; }
+  #placeholder { text-align: center; padding: 60px; color: #334155; font-size: 0.9rem; }
+  #placeholder .icon { font-size: 3rem; margin-bottom: 12px; }
+</style>
+</head>
+<body>
+
+<h1>🔬 Refine4LLM Benchmark Viewer</h1>
+<p class="subtitle">Drop any <code>.jsonl</code> results file to explore</p>
+
+<div class="toolbar">
+  <label>Open file: <input type="file" id="fileInput" accept=".jsonl"></label>
+  <label>Filter config: <select id="filterConfig"><option value="">All</option></select></label>
+  <label>Filter tier: <select id="filterTier"><option value="">All</option></select></label>
+  <label>Filter outcome: <select id="filterOutcome"><option value="">All</option></select></label>
+  <label>Search case: <input type="text" id="search" placeholder="e.g. A2-assign"></label>
+</div>
+
+<div class="stats" id="stats"></div>
+
+<div class="table-wrap">
+  <div id="placeholder">
+    <div class="icon">📂</div>
+    Open a <strong>.jsonl</strong> results file above to get started
+  </div>
+  <table id="table" style="display:none">
+    <thead>
+      <tr>
+        <th>Config</th><th>Tier</th><th>Case</th><th>Repeat</th>
+        <th>Outcome</th><th>Calls</th><th>Wall (s)</th>
+        <th>Nodes</th><th>Attempts</th><th>Laws accepted</th><th>Program</th>
+      </tr>
+    </thead>
+    <tbody id="tbody"></tbody>
+  </table>
+</div>
+
+<!-- Detail panel -->
+<div id="detail">
+  <button class="close-btn" onclick="closeDetail()">✕</button>
+  <h2 id="d-title">Run Detail</h2>
+  <div id="d-content"></div>
+</div>
+
+<script>
+let allRows = [];
+
+document.getElementById('fileInput').addEventListener('change', e => {
+  const file = e.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = ev => {
+    allRows = ev.target.result.trim().split('\n').filter(l => l.trim()).map(l => JSON.parse(l));
+    populateFilters();
+    render();
+  };
+  reader.readAsText(file);
+});
+
+['filterConfig','filterTier','filterOutcome','search'].forEach(id => {
+  document.getElementById(id).addEventListener('input', render);
+});
+
+function populateFilters() {
+  const configs  = [...new Set(allRows.map(r => r.config))].sort();
+  const tiers    = [...new Set(allRows.map(r => r.tier))].sort();
+  const outcomes = [...new Set(allRows.map(r => r.outcome))].sort();
+  fill('filterConfig',  configs);
+  fill('filterTier',    tiers);
+  fill('filterOutcome', outcomes);
+}
+
+function fill(id, values) {
+  const sel = document.getElementById(id);
+  const cur = sel.value;
+  sel.innerHTML = '<option value="">All</option>';
+  values.forEach(v => {
+    const o = document.createElement('option');
+    o.value = v; o.textContent = v;
+    if (v === cur) o.selected = true;
+    sel.appendChild(o);
+  });
+}
+
+function filtered() {
+  const cfg     = document.getElementById('filterConfig').value;
+  const tier    = document.getElementById('filterTier').value;
+  const outcome = document.getElementById('filterOutcome').value;
+  const q       = document.getElementById('search').value.toLowerCase();
+  return allRows.filter(r =>
+    (!cfg     || r.config  === cfg)     &&
+    (!tier    || r.tier    === tier)    &&
+    (!outcome || r.outcome === outcome) &&
+    (!q       || r.case_id.toLowerCase().includes(q))
+  );
+}
+
+function render() {
+  const rows = filtered();
+  renderStats(rows);
+  renderTable(rows);
+}
+
+function renderStats(rows) {
+  const total   = rows.length;
+  const success = rows.filter(r => r.outcome === 'SUCCESS').length;
+  const budget  = rows.filter(r => r.outcome === 'BUDGET').length;
+  const exhaust = rows.filter(r => r.outcome === 'EXHAUSTED').length;
+  const avgCalls = total ? (rows.reduce((a,r) => a + r.llm_calls, 0) / total).toFixed(1) : '—';
+
+  document.getElementById('stats').innerHTML = `
+    <div class="stat green"><div class="val">${success}</div><div class="lbl">SUCCESS</div></div>
+    <div class="stat yellow"><div class="val">${budget}</div><div class="lbl">BUDGET</div></div>
+    <div class="stat red"><div class="val">${exhaust}</div><div class="lbl">EXHAUSTED</div></div>
+    <div class="stat blue"><div class="val">${total}</div><div class="lbl">Total runs</div></div>
+    <div class="stat blue"><div class="val">${avgCalls}</div><div class="lbl">Avg LLM calls</div></div>
+    <div class="stat ${success/total > 0.5 ? 'green' : 'yellow'}">
+      <div class="val">${total ? Math.round(100*success/total) : 0}%</div>
+      <div class="lbl">Pass rate</div>
+    </div>
+  `;
+}
+
+function renderTable(rows) {
+  document.getElementById('placeholder').style.display = rows.length ? 'none' : 'block';
+  document.getElementById('table').style.display = rows.length ? '' : 'none';
+
+  const tb = document.getElementById('tbody');
+  tb.innerHTML = '';
+  rows.forEach((r, i) => {
+    const g = r.graph || {};
+    const acc = Object.entries(g.law_accepted || {}).map(([k,v]) => `${k}×${v}`).join(', ') || '—';
+    const prog = r.program ? `<span class="mono">${esc(r.program.slice(0,30))}${r.program.length>30?'…':''}</span>` : '<span style="color:#4b5563">—</span>';
+
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td>${esc(r.config)}</td>
+      <td><span class="tier">${esc(r.tier)}</span></td>
+      <td><span class="mono">${esc(r.case_id)}</span></td>
+      <td style="color:#64748b">${r.repeat}</td>
+      <td><span class="badge ${r.outcome}">${r.outcome}</span></td>
+      <td>${r.llm_calls}</td>
+      <td>${r.wall_s.toFixed(1)}</td>
+      <td>${g.n_nodes ?? '—'}</td>
+      <td>${g.n_attempts ?? '—'}</td>
+      <td style="font-size:0.75rem;color:#67e8f9">${esc(acc)}</td>
+      <td>${prog}</td>
+    `;
+    tr.addEventListener('click', () => showDetail(r));
+    tb.appendChild(tr);
+  });
+}
+
+function showDetail(r) {
+  const g = r.graph || {};
+  const errors = [...new Set(g.error_messages || [])];
+  const errHtml = errors.length
+    ? errors.map(e => `<div class="error-item">${esc(e.slice(0, 300))}</div>`).join('')
+    : '<div class="empty">✓ No parse errors</div>';
+
+  const lawsProposed = Object.entries(g.law_proposed || {}).map(([k,v]) => `<span class="pill law">${k} ×${v}</span>`).join('');
+  const lawsAccepted = Object.entries(g.law_accepted || {}).map(([k,v]) => `<span class="pill" style="color:#4ade80">${k} ×${v}</span>`).join('');
+  const nodeStatus   = Object.entries(g.node_status  || {}).map(([k,v]) => `<span class="pill">${k}: ${v}</span>`).join('');
+
+  document.getElementById('d-title').textContent = `${r.config} / ${r.case_id} (rep ${r.repeat})`;
+  document.getElementById('d-content').innerHTML = `
+    <div class="section">
+      <div class="section-title">Run info</div>
+      <div class="kv"><span class="k">Outcome</span> <span class="v"><span class="badge ${r.outcome}">${r.outcome}</span></span></div>
+      <div class="kv"><span class="k">LLM calls</span> <span class="v">${r.llm_calls}</span></div>
+      <div class="kv"><span class="k">Wall time</span> <span class="v">${r.wall_s.toFixed(2)}s</span></div>
+      <div class="kv"><span class="k">LLM time</span> <span class="v">${r.llm_time_s.toFixed(2)}s</span></div>
+      <div class="kv"><span class="k">Avg latency</span> <span class="v">${r.mean_latency_s.toFixed(2)}s</span></div>
+      <div class="kv"><span class="k">Output tokens</span> <span class="v">${r.output_tokens}</span></div>
+    </div>
+
+    ${r.program ? `
+    <div class="section">
+      <div class="section-title">Program</div>
+      <div class="program-box">${esc(r.program)}</div>
+    </div>` : ''}
+
+    <div class="section">
+      <div class="section-title">Graph</div>
+      <div class="kv"><span class="k">Nodes</span> <span class="v">${g.n_nodes}</span></div>
+      <div class="kv"><span class="k">Attempts</span> <span class="v">${g.n_attempts}</span></div>
+      <div class="kv"><span class="k">Node status</span> <span class="v">${nodeStatus}</span></div>
+    </div>
+
+    <div class="section">
+      <div class="section-title">Laws proposed</div>
+      ${lawsProposed || '<span style="color:#64748b">none</span>'}
+    </div>
+    <div class="section">
+      <div class="section-title">Laws accepted</div>
+      ${lawsAccepted || '<span style="color:#64748b">none</span>'}
+    </div>
+
+    <div class="section">
+      <div class="section-title">Unique errors (${errors.length})</div>
+      <div class="error-list">${errHtml}</div>
+    </div>
+
+    <div class="section">
+      <div class="section-title">Last 3 LLM responses</div>
+      ${(r.raw_responses || []).slice(-3).map(resp =>
+        `<div class="error-item" style="color:#93c5fd;border-color:#3b82f6">${esc(resp.slice(0,400))}</div>`
+      ).join('') || '<span style="color:#64748b">—</span>'}
+    </div>
+  `;
+  document.getElementById('detail').style.display = 'block';
+}
+
+function closeDetail() {
+  document.getElementById('detail').style.display = 'none';
+}
+
+function esc(s) {
+  if (s == null) return '';
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+// Close detail on ESC
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeDetail(); });
+</script>
+</body>
+</html>

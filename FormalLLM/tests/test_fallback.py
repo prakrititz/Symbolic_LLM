@@ -7,6 +7,13 @@ from FormalLLM.agent.refiner import AutomatedRefiner, RefinementExhausted
 from FormalLLM.refinement.graph.graph import RefinementGraph
 from FormalLLM.refinement.graph.status import NodeStatus, AttemptStatus
 
+# NOTE: the intermediate below is "N > -1" rather than "N >= 0". With "N >= 0"
+# the second sub-spec [N >= 0, x*x <= N] is *identical to the parent*, which the
+# refiner's progress guard now rejects as a no-op. "N > -1" is implied by the
+# precondition (so the scripted skip still succeeds) while genuinely changing the
+# specification, preserving what these tests are actually exercising: fallback
+# when a child cannot be refined.
+
 def test_fallback_mechanism():
     spec_str = """
     Precondition: (N:float) := N >= 0.
@@ -15,7 +22,7 @@ def test_fallback_mechanism():
     spec = parse_spec(spec_str)
     
     responses = [
-        json.dumps({"law": "sequential", "parameters": {"intermediate": "N >= 0"}}),
+        json.dumps({"law": "sequential", "parameters": {"intermediate": "N > -1"}}),
         json.dumps({"law": "skip", "parameters": {}}),
         json.dumps({"law": "assignment", "parameters": {"variable": "x", "expr": "100"}}),
         json.dumps({"law": "assignment", "parameters": {"variable": "x", "expr": "200"}}),
@@ -49,7 +56,7 @@ def test_fallback_discards_succeeded_sibling():
     spec = parse_spec(spec_str)
     
     responses = [
-        json.dumps({"law": "sequential", "parameters": {"intermediate": "N >= 0"}}),
+        json.dumps({"law": "sequential", "parameters": {"intermediate": "N > -1"}}),
         json.dumps({"law": "skip", "parameters": {}}), # Child 1 succeeds
         json.dumps({"law": "assignment", "parameters": {"variable": "x", "expr": "100"}}), # Child 2 fails attempt 0
         json.dumps({"law": "assignment", "parameters": {"variable": "x", "expr": "200"}}), # Child 2 fails attempt 1 -> exhausts retries

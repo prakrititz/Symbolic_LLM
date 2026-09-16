@@ -22,6 +22,19 @@ Instead of relying on an LLM to generate an entire correct program at once, Form
    - Implements a **Counterexample-Guided Feedback Loop** (feeding Z3 failures back into the LLM prompt).
    - Features a robust recursive backtracking/fallback mechanism if the LLM leads the refinement down an unprovable path.
 
+## Benchmarking
+The `benchmarks/` directory contains an extensive test suite used to evaluate how well different local LLMs (like Llama 3.1, Qwen 3.5) navigate the formal refinement process.
+
+- **Tier A**: Single terminal laws (e.g., trivially implied postconditions or direct assignments).
+- **Tier B**: Structural decompositions (e.g., sequential composition or alternation).
+- **Tier C**: Complex, nonlinear problems from the original paper (e.g., tight square root bounds or proper loop invariants).
+
+To reproduce the benchmark runs:
+```bash
+python benchmarks/run_bench.py --configs llama3.1 qwen3.5-think --laws all
+```
+The results are output in JSON Lines format and can be analyzed using `benchmarks/analyse.py`.
+
 ## Dependencies
 - Python 3.10+
 - `lark` (for parsing $L_{spec}$)
