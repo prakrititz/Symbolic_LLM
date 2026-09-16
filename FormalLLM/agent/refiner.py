@@ -15,8 +15,8 @@ class AutomatedRefiner:
         self.llm = llm
         self.max_retries = max_retries
         self.blacklisted_laws_per_node: Dict[str, List[str]] = {}
-        # The 5 core laws implemented
-        self.TOTAL_LAWS = 5
+        # Derive dynamically so this can't drift when new laws are registered
+        self.TOTAL_LAWS = len(engine.laws)
 
     def refine_node(self, graph: RefinementGraph, node_id: str) -> bool:
         """
