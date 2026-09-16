@@ -14,6 +14,7 @@ def verify_obligation(obligation: ProofObligation) -> tuple[str, str]:
     Returns (status, message_or_counterexample)
     """
     translator = Z3Translator()
+    translator.declare_params(getattr(obligation, "params", []))
     solver = z3.Solver()
     
     try:

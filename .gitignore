@@ -1,3 +1,5 @@
 /Related Work/
 /Dr. Hou's Studies/
 .pytest_cache/
+__pycache__/
+*.pyc

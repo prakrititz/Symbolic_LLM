@@ -5,6 +5,28 @@ class Z3Translator:
     def __init__(self):
         self.env = {} # mapping from variable/const name to z3 expression
 
+    def sort_of(self, type_):
+        if isinstance(type_, BoolType):
+            return z3.BoolSort()
+        if isinstance(type_, (IntType, NatType)):
+            return z3.IntSort()
+        if isinstance(type_, FloatType):
+            return z3.RealSort()
+        return None
+
+    def declare_params(self, params):
+        """Seed the environment with declared parameters (and their primed
+        previous-state twins) so that names are given their declared sort."""
+        for p in params or []:
+            if isinstance(p.type_, ArrayType):
+                self.env[p.name] = z3.Array(p.name, z3.IntSort(), z3.IntSort())
+                continue
+            sort = self.sort_of(p.type_)
+            if sort is None:
+                continue
+            self.env[p.name] = z3.Const(p.name, sort)
+            self.env[f"{p.name}0"] = z3.Const(f"{p.name}0", sort)
+
     def translate(self, node: ASTNode):
         if isinstance(node, Spec):
             # A Spec is a pair of precondition and postcondition

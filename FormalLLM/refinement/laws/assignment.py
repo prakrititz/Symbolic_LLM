@@ -23,7 +23,8 @@ class AssignmentLaw(RefinementLaw):
         # Obligation: P ⇒ Q[x := E]
         obligation = ProofObligation(
             assumptions=[spec.precondition.expr],
-            goal=q_substituted
+            goal=q_substituted,
+            params=list(spec.precondition.params) + list(spec.postcondition.params)
         )
         
         program = Assignment(variable, expr)

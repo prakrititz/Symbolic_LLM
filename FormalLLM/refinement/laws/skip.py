@@ -14,7 +14,8 @@ class SkipLaw(RefinementLaw):
         # Obligation: P ⇒ Q
         obligation = ProofObligation(
             assumptions=[spec.precondition.expr],
-            goal=spec.postcondition.expr
+            goal=spec.postcondition.expr,
+            params=list(spec.precondition.params) + list(spec.postcondition.params)
         )
         
         program = Skip()

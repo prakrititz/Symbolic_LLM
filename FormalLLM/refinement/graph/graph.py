@@ -118,8 +118,11 @@ class RefinementGraph:
             
         elif law == "iteration":
             guard = accepted_attempt.parameters["guard"]
-            init_prog = self.reconstruct_program(roles["init"])
             body_prog = self.reconstruct_program(roles["body"])
-            return SequentialComposition(init_prog, While(guard, body_prog))
+            loop = While(guard, body_prog)
+            if "init" not in roles:
+                return loop
+            init_prog = self.reconstruct_program(roles["init"])
+            return SequentialComposition(init_prog, loop)
             
         raise ValueError(f"Cannot reconstruct unknown recursive law: {law}")

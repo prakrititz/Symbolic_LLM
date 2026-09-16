@@ -78,8 +78,14 @@ class AutomatedRefiner:
                             roles["then"] = graph.create_node(result.sub_specs[0])
                             roles["else"] = graph.create_node(result.sub_specs[1])
                         elif law == "iteration":
-                            roles["init"] = graph.create_node(result.sub_specs[0])
-                            roles["body"] = graph.create_node(result.sub_specs[1])
+                            # IterationLaw only emits an initialisation sub-spec when the
+                            # precondition differs from the chosen invariant; otherwise the
+                            # single sub-spec is the loop body.
+                            if len(result.sub_specs) == 2:
+                                roles["init"] = graph.create_node(result.sub_specs[0])
+                                roles["body"] = graph.create_node(result.sub_specs[1])
+                            else:
+                                roles["body"] = graph.create_node(result.sub_specs[0])
                             
                         attempt_obj.destination_roles = roles
                         attempt_obj.update_status(AttemptStatus.ACCEPTED)
