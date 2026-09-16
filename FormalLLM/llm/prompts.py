@@ -51,6 +51,10 @@ Available Laws:
 - alternation: Output JSON with `law: "alternation"` and `parameters: {{"guard": "G"}}` (where G is a boolean condition).
 - iteration: Output JSON with `law: "iteration"` and `parameters: {{"guard": "G", "variant": "V"}}` (where G is condition, V is integer expression).
 - skip: Output JSON with `law: "skip"` and no parameters.
+- strengthen_post: Output JSON with `law: "strengthen_post"` and `parameters: {{"intermediate_post": "R"}}`.
+- weaken_pre: Output JSON with `law: "weaken_pre"` and `parameters: {{"intermediate_pre": "R"}}`.
+- initialized_skip: Output JSON with `law: "initialized_skip"` and no parameters.
+- flexible_sequential: Output JSON with `law: "flexible_sequential"` and `parameters: {{"pre1": "A", "post1": "B", "pre2": "C", "post2": "D"}}`.
 
 Respond ONLY with valid JSON. Do not include markdown formatting or explanations.
 """

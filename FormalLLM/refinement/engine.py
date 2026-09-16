@@ -6,6 +6,10 @@ from .laws.skip import SkipLaw
 from .laws.sequential import SequentialCompositionLaw
 from .laws.alternation import AlternationLaw
 from .laws.iteration import IterationLaw
+from .laws.strengthen_post import StrengthenPostconditionLaw
+from .laws.weaken_pre import WeakenPreconditionLaw
+from .laws.initialized_skip import InitializedSkipLaw
+from .laws.flexible_sequential import FlexibleSequentialCompositionLaw
 from FormalLLM.verification.z3_backend import verify_obligation, VerificationResult
 
 class VerificationError(Exception):
@@ -19,6 +23,10 @@ class RefinementEngine:
             "sequential": SequentialCompositionLaw,
             "alternation": AlternationLaw,
             "iteration": IterationLaw,
+            "strengthen_post": StrengthenPostconditionLaw,
+            "weaken_pre": WeakenPreconditionLaw,
+            "initialized_skip": InitializedSkipLaw,
+            "flexible_sequential": FlexibleSequentialCompositionLaw,
         }
 
     def register_law(self, name: str, law_cls: Type[RefinementLaw]):
