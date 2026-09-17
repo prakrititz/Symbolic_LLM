@@ -16,6 +16,7 @@ from FormalLLM.llm.prompts import to_string, LAW_DESCRIPTIONS
 from FormalLLM.refinement.laws.base import RefinementLaw, RefinementResult
 from FormalLLM.refinement.laws.registry import LAWS, law_named, UnknownLawError
 from FormalLLM.refinement.laws.iteration import IterationLaw
+from FormalLLM.refinement.laws.initialised_iteration import InitialisedIterationLaw
 from FormalLLM.refinement.laws.alternation import AlternationLaw
 
 
@@ -108,17 +109,21 @@ def test_iteration_body_pins_the_variant_and_requires_a_decrease():
 
     v0 = BinaryOp(VariablePreviousState("N"), "-", VariablePreviousState("i"))
     assert to_string(BinaryOp(variant, "=", v0)) in to_string(body.precondition.expr)
+    
+    # Postcondition requires 0 <= V and V < V0
+    assert "0 <= " in to_string(body.postcondition.expr)
     assert to_string(BinaryOp(variant, "<", v0)) in to_string(body.postcondition.expr)
 
 
-def test_iteration_names_init_only_when_the_precondition_is_not_the_invariant():
+def test_initialised_iteration_generates_init_and_body_roles():
     spec = parse_spec(SQRT_SPEC)
-    result = IterationLaw().apply(spec, {
+    result = InitialisedIterationLaw().apply(spec, {
+        "invariant": BinaryOp(Const("i"), "<=", Const("N")),
         "guard": BinaryOp(Const("i"), "<", Const("N")),
         "variant": BinaryOp(Const("N"), "-", Const("i")),
     })
-    # The invariant is taken to be the precondition itself, so no init step.
-    assert result.roles == ["body"]
+    # The invariant is explicitly provided, so it generates both init and body.
+    assert result.roles == ["init", "body"]
 
 
 def test_alternation_splits_on_the_guard_and_its_negation():

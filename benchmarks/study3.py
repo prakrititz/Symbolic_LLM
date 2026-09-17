@@ -184,6 +184,9 @@ def main():
                     help="the specification variable the wrapped function returns")
     ap.add_argument("--out", default="benchmarks/results/results_study3.jsonl")
     args = ap.parse_args()
+    
+    # Compulsory: always run both arms to compare direct vs refinement
+    args.arms = ["direct", "refinement"]
 
     configs = expand_configs(args.configs)
     cases = [CASES_BY_ID[c] for c in args.cases]

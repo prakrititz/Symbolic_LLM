@@ -18,6 +18,7 @@ from .iteration import IterationLaw
 from .strengthen_post import StrengthenPostconditionLaw
 from .weaken_pre import WeakenPreconditionLaw
 from .initialized_skip import InitializedSkipLaw
+from .initialised_iteration import InitialisedIterationLaw
 from .flexible_sequential import FlexibleSequentialCompositionLaw
 
 #: Canonical law name -> implementing class.
@@ -35,6 +36,7 @@ LAWS: Dict[str, Type[RefinementLaw]] = {
     "weaken_pre": WeakenPreconditionLaw,
     # Derived / extended laws (paper Section 6.2)
     "initialized_skip": InitializedSkipLaw,
+    "initialised_iteration": InitialisedIterationLaw,
     "flexible_sequential": FlexibleSequentialCompositionLaw,
 }
 

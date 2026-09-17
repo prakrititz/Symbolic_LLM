@@ -53,14 +53,16 @@ LAW_DESCRIPTIONS = {
     "assignment": 'parameters: {"variable": "x", "expr": "E"} -- refines to the assignment x := E.',
     "sequential": 'parameters: {"intermediate": "R"} -- splits into [P,R] ; [R,Q].',
     "alternation": 'parameters: {"guard": "G"} -- splits into if G then [P/\\G, Q] else [P/\\~G, Q].',
-    "iteration": 'parameters: {"invariant": "I", "guard": "G", "variant": "V"} '
-                 '-- builds x:[P,I] ; while G do (body). I is the loop invariant: '
-                 'it must hold before and after every iteration, and I together '
-                 'with the negated guard must imply the postcondition. V is an '
-                 'expression that strictly decreases each iteration. If you omit '
-                 '"invariant" the precondition is used, which only works when the '
-                 'precondition is already a loop invariant. Supplying I lets one '
-                 'step introduce both the initialisation and the loop.',
+    "iteration": 'parameters: {"guard": "G", "variant": "V"} '
+                 '-- builds while G do (body). Valid ONLY when the precondition '
+                 'is already the loop invariant. V is an expression that strictly '
+                 'decreases each iteration.',
+    "initialised_iteration": 'parameters: {"invariant": "I", "guard": "G", "variant": "V"} '
+                             '-- builds x:[P,I] ; while G do (body). I is the loop invariant: '
+                             'it must hold before and after every iteration, and I together '
+                             'with the negated guard must imply the postcondition. V is an '
+                             'expression that strictly decreases each iteration. '
+                             'Supplying I lets one step introduce both the initialisation and the loop.',
     "skip": 'no parameters -- valid only when P already implies Q.',
     "strengthen_post": 'parameters: {"intermediate_post": "R"} -- replaces Q by a STRICTLY STRONGER R (R => Q). R must not equal Q.',
     "weaken_pre": 'parameters: {"intermediate_pre": "R"} -- replaces P by a STRICTLY WEAKER R (P => R). R must not equal P.',
@@ -70,7 +72,7 @@ LAW_DESCRIPTIONS = {
 
 # Presentation order; anything unlisted is appended alphabetically.
 LAW_ORDER = ["assignment", "skip", "initialized_skip", "sequential",
-             "flexible_sequential", "alternation", "iteration",
+             "flexible_sequential", "alternation", "iteration", "initialised_iteration",
              "strengthen_post", "weaken_pre"]
 
 SYNTAX_HELP = (

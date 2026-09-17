@@ -109,8 +109,8 @@ def test_fallback_root_failure():
 def test_law_may_be_retried_with_different_parameters():
     """A deep failure must not ban the law -- only that parameter choice.
 
-    The model's first `iteration` invariant is too weak to discharge the loop
-    body. The old refiner blacklisted `iteration` at that point, so the correct
+    The model's first `initialised_iteration` invariant is too weak to discharge the loop
+    body. The old refiner blacklisted `initialised_iteration` at that point, so the correct
     law became unavailable and the search had to wander elsewhere. It should
     instead be re-proposable with a stronger invariant.
     """
@@ -120,10 +120,10 @@ def test_law_may_be_retried_with_different_parameters():
         "Postcondition: (N:float)(e:float) := x*x <= N /\ N < (x+e)*(x+e)."
     )
 
-    weak = json.dumps({"law": "iteration", "parameters": {
+    weak = json.dumps({"law": "initialised_iteration", "parameters": {
         "invariant": "(x * x) <= N",                 # too weak: admits x < 0
         "guard": "N >= (x + e) * (x + e)", "variant": "N - (x * x)"}})
-    strong = json.dumps({"law": "iteration", "parameters": {
+    strong = json.dumps({"law": "initialised_iteration", "parameters": {
         "invariant": "(x * x) <= N && x >= 0",       # repaired
         "guard": "N >= (x + e) * (x + e)", "variant": "N - (x * x)"}})
     assign_zero = json.dumps({"law": "assignment",
@@ -141,10 +141,10 @@ def test_law_may_be_retried_with_different_parameters():
     graph = RefinementGraph(spec)
 
     assert refiner.refine_node(graph, graph.root_id) is True
-    assert "iteration" not in refiner.blacklisted_laws_per_node[graph.root_id]
+    assert "initialised_iteration" not in refiner.blacklisted_laws_per_node[graph.root_id]
 
     laws = [graph.attempts[a].law for a in graph.nodes[graph.root_id].attempts]
-    assert laws.count("iteration") == 2, "iteration should be re-proposed, not banned"
+    assert laws.count("initialised_iteration") == 2, "initialised_iteration should be re-proposed, not banned"
 
 
 def test_subtree_failure_reason_reaches_the_parent():
@@ -154,7 +154,7 @@ def test_subtree_failure_reason_reaches_the_parent():
         "Precondition: (N:float)(e:float) := N >= 0 /\ e > 0.\n"
         "Postcondition: (N:float)(e:float) := x*x <= N /\ N < (x+e)*(x+e)."
     )
-    weak = json.dumps({"law": "iteration", "parameters": {
+    weak = json.dumps({"law": "initialised_iteration", "parameters": {
         "invariant": "(x * x) <= N",
         "guard": "N >= (x + e) * (x + e)", "variant": "N - (x * x)"}})
     assign_step = json.dumps({"law": "assignment",

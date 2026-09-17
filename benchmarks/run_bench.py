@@ -13,7 +13,7 @@ from FormalLLM.llm.provider import OllamaProvider, OpenAIChatProvider
 
 CORE_LAWS = ["assignment", "skip", "sequential", "alternation", "iteration"]
 EXTENDED_LAWS = CORE_LAWS + ["strengthen_post", "weaken_pre",
-                             "initialized_skip", "flexible_sequential"]
+                             "initialized_skip", "flexible_sequential", "initialised_iteration"]
 LAW_SETS = {"core": CORE_LAWS, "extended": EXTENDED_LAWS, "all": None}
 
 # Hosted OpenAI-compatible endpoint serving the large models. Credentials are

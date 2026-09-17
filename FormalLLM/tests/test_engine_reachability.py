@@ -54,7 +54,7 @@ def test_sqrt_with_error_bound_is_reachable():
     )
     engine, graph = RefinementEngine(), RefinementGraph(spec)
 
-    roles = apply_step(graph, engine, graph.root_id, "iteration", expr_params(
+    roles = apply_step(graph, engine, graph.root_id, "initialised_iteration", expr_params(
         invariant="(x * x) <= N && x >= 0",
         guard="N >= (x + e) * (x + e)",
         variant="N - (x * x)"))
@@ -82,7 +82,7 @@ def test_counting_loop_with_supplied_invariant_is_reachable():
     )
     engine, graph = RefinementEngine(), RefinementGraph(spec)
 
-    roles = apply_step(graph, engine, graph.root_id, "iteration",
+    roles = apply_step(graph, engine, graph.root_id, "initialised_iteration",
                        expr_params(invariant="i <= N", guard="i < N", variant="N - i"))
     apply_step(graph, engine, roles["init"], "skip", {})
     apply_step(graph, engine, roles["body"], "assignment",
@@ -100,7 +100,7 @@ def test_integer_division_is_reachable():
     )
     engine, graph = RefinementEngine(), RefinementGraph(spec)
 
-    roles = apply_step(graph, engine, graph.root_id, "iteration", expr_params(
+    roles = apply_step(graph, engine, graph.root_id, "initialised_iteration", expr_params(
         invariant="q*d + r = n && r >= 0", guard="r >= d", variant="r"))
 
     init = apply_step(graph, engine, roles["init"], "sequential",
@@ -120,7 +120,7 @@ def test_integer_division_is_reachable():
     assert graph.is_complete(graph.root_id)
 
 
-def test_iteration_without_a_variant_is_rejected_clearly():
+def test_initialised_iteration_without_a_variant_is_rejected_clearly():
     """Omitting the variant must say so, not silently default to a constant."""
     spec = parse_spec(
         "Frame: x.\n"
@@ -128,6 +128,6 @@ def test_iteration_without_a_variant_is_rejected_clearly():
         "Postcondition: (N:float)(e:float) := x*x <= N /\\ N < (x+e)*(x+e)."
     )
     with pytest.raises(ValueError, match="variant"):
-        RefinementEngine().apply(spec, "iteration", {
+        RefinementEngine().apply(spec, "initialised_iteration", {
             "guard": parse_expr("N >= (x + e) * (x + e)"),
             "invariant": parse_expr("(x * x) <= N")})

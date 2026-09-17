@@ -41,16 +41,14 @@ class IterationLaw(RefinementLaw):
     Omitting `invariant` keeps the old behaviour (I = P), so existing scripted
     refinements and tests are unaffected.
 
-    Obligations: I ∧ ¬G ⇒ Q.
-    Sub-specs: [P, I] when I differs from P (the initialisation), and the body
-    [I ∧ G ∧ V = V0, I ∧ V < V0].
+    Obligations: P ∧ ¬G ⇒ Q.
+    Sub-specs: [P ∧ G ∧ V = V0, P ∧ 0 ≤ V ∧ V < V0].
     """
     # guard and variant have no meaningful default. Defaulting the variant to
     # "0" (as this once did) yields a constant that can never decrease, so the
     # loop body becomes unprovable and the model is told its parameters were
     # wrong rather than that it forgot one.
-    PARAMS = (("guard", "expr", None), ("variant", "expr", None),
-              ("invariant", "expr", None))
+    PARAMS = (("guard", "expr", None), ("variant", "expr", None))
     def apply(self, spec: Spec, parameters: Dict[str, Any]) -> RefinementResult:
         guard_expr = parameters.get('guard')
         variant_expr = parameters.get('variant')
@@ -64,26 +62,15 @@ class IterationLaw(RefinementLaw):
                 f"strictly decrease on every iteration so the loop terminates."
             )
 
-        # The invariant is supplied by the model; falling back to the
-        # precondition reproduces the core Lemma 2.7 form.
-        invariant_expr = parameters.get('invariant')
-        if invariant_expr is None:
-            invariant_expr = spec.precondition.expr
-        else:
-            # Carry the precondition's rigid facts into the invariant. The loop
-            # body is specified from the invariant alone, so without this a fact
-            # like `e > 0` -- about a variable the program never assigns -- is
-            # lost, and the variant-decrease obligation cannot be discharged.
-            # No declared frame means nothing is known to be rigid and this is
-            # a no-op.
-            invariant_expr = rigid_context(spec, invariant_expr)
+        # In pure Iteration, the invariant is exactly the precondition.
+        invariant_expr = spec.precondition.expr
         
-        # Obligation: I ∧ ¬G ⇒ Q
+        # Obligation: P ∧ ¬G ⇒ Q
         obligation = ProofObligation(
             assumptions=[copy.deepcopy(invariant_expr), UnaryOp('~', copy.deepcopy(guard_expr))],
             goal=copy.deepcopy(spec.postcondition.expr),
             params=obligation_params(spec),
-            description="on exit the invariant and the negated guard must imply the postcondition: I /\ ~G => Q",
+            description="on exit the precondition (invariant) and the negated guard must imply the postcondition: P /\\ ~G => Q",
         )
         
         # V0 is the variant evaluated in the pre-state of the body
@@ -96,40 +83,25 @@ class IterationLaw(RefinementLaw):
         pre_expr = BinaryOp(pre_expr, '/\\',
                             BinaryOp(copy.deepcopy(variant_expr), '=', copy.deepcopy(v0_expr)))
 
-        # Sub-spec postcondition: I ∧ (V < V0)
+        # Sub-spec postcondition: P ∧ 0 ≤ V ∧ (V < V0)
+        from FormalLLM.lspec.ast import Number
+        zero = Number("0")
+        v_lower_bound = BinaryOp(zero, '<=', copy.deepcopy(variant_expr))
         v_decreases = BinaryOp(copy.deepcopy(variant_expr), '<', v0_expr)
-        post_expr = BinaryOp(copy.deepcopy(invariant_expr), '/\\', v_decreases)
+        variant_cond = BinaryOp(v_lower_bound, '/\\', v_decreases)
+        post_expr = BinaryOp(copy.deepcopy(invariant_expr), '/\\', variant_cond)
         
         body_spec = _derive(spec, 
             precondition=Definition(None, copy.deepcopy(spec.precondition.params), pre_expr),
             postcondition=Definition(None, copy.deepcopy(spec.postcondition.params), post_expr)
         )
         
-        sub_specs = []
-        roles = []
-        
-        # If P != I we need an initialisation sub-spec [P, I] to establish the
-        # invariant before the loop is entered.
-        if spec.precondition.expr != invariant_expr:
-            init_spec = _derive(spec, 
-                precondition=copy.deepcopy(spec.precondition),
-                postcondition=Definition(None, copy.deepcopy(spec.postcondition.params), copy.deepcopy(invariant_expr))
-            )
-            sub_specs.append(init_spec)
-            roles.append("init")
-            
-        sub_specs.append(body_spec)
-        roles.append("body")
-        
         return RefinementResult(
-            sub_specs=sub_specs,
+            sub_specs=[body_spec],
             obligations=[obligation],
-            roles=roles,
+            roles=["body"],
         )
 
     @classmethod
     def build_program(cls, parameters, children):
-        loop = While(parameters["guard"], children["body"])
-        if "init" not in children:
-            return loop
-        return SequentialComposition(children["init"], loop)
+        return While(parameters["guard"], children["body"])
