@@ -44,11 +44,12 @@ def main():
     
     print(f"Extracted output variables: {output_vars}")
 
-    if model_name == "oracle":
-        from benchmarks.oracle import OracleProvider
-        provider = OracleProvider()
-    else:
-        provider = OllamaProvider(model_name=model_name)
+    # No "oracle" provider: replaying a hand-written playbook of correct moves
+    # measures the playbook's author, not the system, and reporting it beside
+    # model runs made results look better than they were. The scripted
+    # refinements are regression tests now --
+    # FormalLLM/tests/test_engine_reachability.py.
+    provider = OllamaProvider(model_name=model_name)
         
     engine = RefinementEngine()
     refiner = AutomatedRefiner(engine, provider, max_retries=3)
