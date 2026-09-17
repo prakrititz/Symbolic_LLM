@@ -182,8 +182,13 @@ def main():
     ap.add_argument("--laws", choices=sorted(LAW_SETS), default="all")
     ap.add_argument("--output-var", default="x",
                     help="the specification variable the wrapped function returns")
+    ap.add_argument("--lenient-variant", action="store_true",
+                    help="Disable the 0 <= V strict variant bound check (for ablation studies)")
     ap.add_argument("--out", default="benchmarks/results/results_study3.jsonl")
     args = ap.parse_args()
+    
+    if args.lenient_variant:
+        os.environ["FORMALLLM_STRICT_VARIANT"] = "0"
     
     # Compulsory: always run both arms to compare direct vs refinement
     args.arms = ["direct", "refinement"]

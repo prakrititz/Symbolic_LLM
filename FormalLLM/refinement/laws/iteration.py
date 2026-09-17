@@ -83,12 +83,19 @@ class IterationLaw(RefinementLaw):
         pre_expr = BinaryOp(pre_expr, '/\\',
                             BinaryOp(copy.deepcopy(variant_expr), '=', copy.deepcopy(v0_expr)))
 
-        # Sub-spec postcondition: P ∧ 0 ≤ V ∧ (V < V0)
+        # Sub-spec postcondition: P ∧ (0 ≤ V) ∧ (V < V0) if strict, else P ∧ (V < V0)
         from FormalLLM.lspec.ast import Number
-        zero = Number("0")
-        v_lower_bound = BinaryOp(zero, '<=', copy.deepcopy(variant_expr))
+        import os
+        strict = os.environ.get("FORMALLLM_STRICT_VARIANT", "1") == "1"
         v_decreases = BinaryOp(copy.deepcopy(variant_expr), '<', v0_expr)
-        variant_cond = BinaryOp(v_lower_bound, '/\\', v_decreases)
+        
+        if strict:
+            zero = Number("0")
+            v_lower_bound = BinaryOp(zero, '<=', copy.deepcopy(variant_expr))
+            variant_cond = BinaryOp(v_lower_bound, '/\\', v_decreases)
+        else:
+            variant_cond = v_decreases
+            
         post_expr = BinaryOp(copy.deepcopy(invariant_expr), '/\\', variant_cond)
         
         body_spec = _derive(spec, 
