@@ -1,5 +1,6 @@
 from typing import List
 from FormalLLM.refinement.graph.node import RefinementNode
+from FormalLLM.lspec import walk
 from FormalLLM.lspec.ast import *
 from FormalLLM.lpl.ast import *
 
@@ -42,13 +43,24 @@ def to_string(node: ASTNode, compact: bool = False) -> str:
         return f"if {to_string(node.guard)}:\n  {to_string(node.then_branch, compact=True)}\nelse:\n  {to_string(node.else_branch, compact=True)}"
     elif isinstance(node, While):
         return f"while {to_string(node.guard)}:\n  {to_string(node.body, compact=True)}"
-    return str(node)
+    # No silent fallback: `str(node)` rendered an unhandled node as its
+    # dataclass repr, which then travelled into the LLM prompt and into
+    # `spec_key`, where the progress guard compares specifications as strings.
+    # Fail loudly instead.
+    raise walk.UnknownNodeError(node)
 
 LAW_DESCRIPTIONS = {
     "assignment": 'parameters: {"variable": "x", "expr": "E"} -- refines to the assignment x := E.',
     "sequential": 'parameters: {"intermediate": "R"} -- splits into [P,R] ; [R,Q].',
     "alternation": 'parameters: {"guard": "G"} -- splits into if G then [P/\\G, Q] else [P/\\~G, Q].',
-    "iteration": 'parameters: {"guard": "G", "variant": "V"} -- loop with invariant P, guard G and integer variant V, which must strictly decrease.',
+    "iteration": 'parameters: {"invariant": "I", "guard": "G", "variant": "V"} '
+                 '-- builds x:[P,I] ; while G do (body). I is the loop invariant: '
+                 'it must hold before and after every iteration, and I together '
+                 'with the negated guard must imply the postcondition. V is an '
+                 'expression that strictly decreases each iteration. If you omit '
+                 '"invariant" the precondition is used, which only works when the '
+                 'precondition is already a loop invariant. Supplying I lets one '
+                 'step introduce both the initialisation and the loop.',
     "skip": 'no parameters -- valid only when P already implies Q.',
     "strengthen_post": 'parameters: {"intermediate_post": "R"} -- replaces Q by a STRICTLY STRONGER R (R => Q). R must not equal Q.',
     "weaken_pre": 'parameters: {"intermediate_pre": "R"} -- replaces P by a STRICTLY WEAKER R (P => R). R must not equal P.',
@@ -63,13 +75,14 @@ LAW_ORDER = ["assignment", "skip", "initialized_skip", "sequential",
 
 SYNTAX_HELP = (
     "Expression syntax (this is NOT Python):\n"
-    "- conjunction is /\\ and disjunction is \\/   (never && or ||)\n"
-    "- negation is ~ ; inequality is <>\n"
-    "- comparisons are < <= = > >= ; arithmetic is + - * /\n"
+    "- conjunction: write &&    disjunction: write ||    negation: write !\n"
+    "  L_spec spells these /\\ and \\/ and ~, but a backslash inside a JSON\n"
+    "  string has to be doubled and that is easy to get wrong, so the\n"
+    "  backslash-free spellings above are preferred and always accepted.\n"
+    "- comparisons are < <= = > >= and != ; arithmetic is + - * /\n"
     "- x0 means the value of x in the previous state\n"
-    "- there are NO function calls: sqrt, max, abs, min are unavailable\n"
-    "- inside a JSON string every backslash must be doubled: "
-    'write "a /\\\\ b", not "a /\\ b"\n'
+    "- there are NO function calls: sqrt, max, abs, min are unavailable.\n"
+    "  A square root must be reached by refining to a loop, never by sqrt().\n"
 )
 
 
@@ -98,11 +111,27 @@ def generate_state_prompt(node: RefinementNode,
 
     spec_str = to_string(node.specification)
 
+    # State the frame explicitly. Without it the model proposes assignments to
+    # variables it is not allowed to change -- measured on gpt-oss-120b, which
+    # spent calls trying to assign to N -- and cannot tell which names are
+    # rigid.
+    frame = getattr(node.specification, "frame", None)
+    frame_note = ""
+    if frame:
+        names = ", ".join(getattr(v, "name", str(v)) for v in frame)
+        frame_note = (
+            f"\nYou may ONLY assign to: {names}.\n"
+            "Every other name is fixed and must not be assigned; whatever the "
+            "precondition says about those names stays true throughout, so you "
+            "may rely on it.\n"
+        )
+
     prompt = f"""You are a formal refinement agent. Your task is to select a refinement law to apply to the following specification.
 
 Specification:
 {spec_str}
 
+{frame_note}
 Available Laws (respond with the law name and its parameters):
 {law_lines}
 

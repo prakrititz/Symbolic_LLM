@@ -29,6 +29,16 @@ class AutomatedRefiner:
         self.blacklisted_laws_per_node: Dict[str, List[str]] = {}
         # Derive dynamically so this can't drift when new laws are registered
         self.TOTAL_LAWS = len(engine.laws)
+        # How many times each (node, law) pair has been tried with parameters
+        # that failed somewhere below. A law is only abandoned once several
+        # *different* parameter choices have failed -- see refine_node.
+        self.param_failures_per_node: Dict[tuple, int] = {}
+        # Why the most recently abandoned subtree failed, so the parent can be
+        # told something more useful than "try a different approach".
+        self.last_subtree_failure: Optional[str] = None
+        # A law whose parameters failed below is given this many chances to be
+        # re-proposed with better parameters before it is blacklisted outright.
+        self.max_param_attempts = 2
 
     def refine_node(self, graph: RefinementGraph, node_id: str,
                     ancestry: tuple = ()) -> bool:
@@ -115,23 +125,13 @@ class AutomatedRefiner:
                             )
                             continue
 
-                        # Recursive branch (e.g. Sequential, Iteration)
-                        roles = {}
-                        if law == "sequential" or law == "flexible_sequential":
-                            roles["part1"] = graph.create_node(result.sub_specs[0])
-                            roles["part2"] = graph.create_node(result.sub_specs[1])
-                        elif law == "alternation":
-                            roles["then"] = graph.create_node(result.sub_specs[0])
-                            roles["else"] = graph.create_node(result.sub_specs[1])
-                        elif law == "iteration":
-                            if len(result.sub_specs) == 2:
-                                roles["init"] = graph.create_node(result.sub_specs[0])
-                                roles["body"] = graph.create_node(result.sub_specs[1])
-                            else:
-                                roles["body"] = graph.create_node(result.sub_specs[0])
-                        elif law in ["strengthen_post", "weaken_pre"]:
-                            roles["sub"] = graph.create_node(result.sub_specs[0])
-                            
+                        # Recursive branch (e.g. Sequential, Iteration). The law
+                        # names its own sub-specifications, so no per-law table
+                        # is needed here -- a newly registered law works
+                        # unchanged.
+                        roles = {role: graph.create_node(sub_spec)
+                                 for role, sub_spec in result.by_role().items()}
+
                         attempt_obj.destination_roles = roles
                         attempt_obj.update_status(AttemptStatus.ACCEPTED)
                         node.status = NodeStatus.DELEGATED
@@ -146,12 +146,44 @@ class AutomatedRefiner:
                         if all_success:
                             return True
                         else:
-                            # FallBack triggered! A child completely failed to be refined.
-                            # We must abandon this law choice and retry at this node.
-                            self.blacklisted_laws_per_node[node_id].append(law)
+                            # A child could not be refined. The cause is often
+                            # not the law but the *parameters* it was given --
+                            # an invariant too weak to discharge the loop body,
+                            # say. Blacklisting the law here (as this code used
+                            # to) permanently bans the correct move because one
+                            # invariant was wrong, and forces the model to
+                            # abandon an approach it should be repairing.
+                            # Instead, count the failure, hand back the reason
+                            # the subtree failed, and let the law be re-proposed
+                            # with better parameters.
+                            key = (node_id, law)
+                            self.param_failures_per_node[key] =                                 self.param_failures_per_node.get(key, 0) + 1
+
                             attempt_obj.update_status(AttemptStatus.ABORTED)
                             node.status = NodeStatus.OPEN
-                            retry_context = f"The law choice '{law}' led to an unrefinable sub-specification deeper in the tree. Try a different approach."
+
+                            reason = self.last_subtree_failure
+                            if self.param_failures_per_node[key] >= self.max_param_attempts:
+                                # Repeatedly bad parameters: give up on the law.
+                                self.blacklisted_laws_per_node[node_id].append(law)
+                                retry_context = (
+                                    f"'{law}' has now failed {self.max_param_attempts} "
+                                    f"times with different parameters and is no longer "
+                                    f"available here. Choose a different law."
+                                )
+                            else:
+                                retry_context = (
+                                    f"Your '{law}' step was applied, but the "
+                                    f"sub-specification it produced could not be "
+                                    f"refined. You may use '{law}' again, but you "
+                                    f"must choose DIFFERENT parameters -- the same "
+                                    f"ones will fail the same way."
+                                )
+                            if reason:
+                                retry_context += (
+                                    "\n\nThe failure deeper in the tree was:\n"
+                                    + reason
+                                )
                             
                 except VerificationError as e:
                     msg = str(e)
@@ -173,7 +205,10 @@ class AutomatedRefiner:
                 attempt_obj.error_message = str(e)
                 retry_context = f"System Error processing response: {str(e)}"
                 
-        # If we exit the loop, max_retries exhausted or all laws blacklisted. 
+        # If we exit the loop, max_retries exhausted or all laws blacklisted.
+        # Remember why, so the parent can pass it to the model instead of a
+        # generic "that did not work".
+        self.last_subtree_failure = retry_context or None
         node.status = NodeStatus.FAILED
         if node_id == graph.root_id:
             exhausted = self.blacklisted_laws_per_node.get(node_id, [])

@@ -5,7 +5,11 @@ type: "bool" -> t_bool
     | "char" -> t_char
     | "array" type -> t_array
 
-spec: "Precondition:" definition "Postcondition:" definition
+spec: frame? "Precondition:" definition "Postcondition:" definition
+
+frame: "Frame:" frame_var ("," frame_var)* "."
+
+frame_var: NAME (":" type)?
 
 definition: NAME? params* ":=" expr "."
 

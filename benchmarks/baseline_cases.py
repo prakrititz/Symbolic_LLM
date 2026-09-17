@@ -91,12 +91,43 @@ BASELINE = {
         inputs=[(v,) for v in _ints(12, 0, 200)],
         check=lambda a, r: isinstance(r, int) and r >= a[0],
     ),
+    "C5-sqrt-paper": dict(
+        nl="Given a number N >= 0 and an error bound e > 0, return a number x "
+           "such that x*x <= N and N < (x+e)*(x+e). In other words x is the "
+           "square root of N to within e.",
+        signature="def f(N: float, e: float) -> float:",
+        # Chosen to cover the three failure modes the paper reports in Figure 1:
+        # N < 1 (Copilot's upper bound is wrong), N = 5 (GPT-4 reaches a float
+        # fixed point and loops forever), and N < (e/4)**2 (o1-preview starts x
+        # negative). The remainder are ordinary values.
+        inputs=[(0.5, 0.01), (0.25, 0.01), (0.9, 0.001),
+                (5.0, 0.01), (5.0, 0.001),
+                (1e-6, 0.01), (0.0, 0.01),
+                (2.0, 0.01), (16.0, 0.01), (10000.0, 0.1),
+                (1.0, 0.001), (123.456, 0.01)],
+        check=lambda a, r: (isinstance(r, (int, float))
+                            and r * r <= a[0] + 1e-9
+                            and a[0] < (r + a[1]) * (r + a[1]) + 1e-9),
+    ),
     "C4-loop-invariant": dict(
         nl="Given integers i and N with i <= N, count i up until it equals N, "
            "and return i.",
         signature="def f(i: int, N: int) -> int:",
         inputs=[(v, v + d) for v, d in zip(_ints(12), _ints(12, 0, 60))],
         check=lambda a, r: r == a[1],
+    ),
+    "D1-intdiv": dict(
+        nl="Given integers n >= 0 and d > 0, return the pair (q, r) where q is "
+           "the quotient and r the remainder of dividing n by d: q*d + r == n "
+           "and 0 <= r < d.",
+        signature="def f(n: int, d: int) -> tuple:",
+        # Edge cases the paper's argument turns on: d = 1, d > n, n = 0, and
+        # large ratios where a naive loop is slow but still correct.
+        inputs=[(0, 1), (0, 7), (1, 1), (5, 1), (7, 3), (3, 7), (10, 10),
+                (100, 7), (99, 100), (1, 1000), (12345, 11), (1000, 3)],
+        check=lambda a, r: (isinstance(r, (tuple, list)) and len(r) == 2
+                            and r[0] * a[1] + r[1] == a[0]
+                            and 0 <= r[1] < a[1]),
     ),
 }
 

@@ -1,14 +1,130 @@
 import json
+import re
 from typing import Tuple, Dict, Any
+
 from FormalLLM.lspec.parser import parse_spec
+from FormalLLM.refinement.laws.registry import law_named
+
+
+# L_spec writes conjunction as /\ and disjunction as \/. Inside a JSON string a
+# single backslash starts an escape, so a model that writes "a /\ b" without
+# doubling the backslash sends us `/` followed by a newline (from \n) or `/"`
+# (from \"). The result is a parse error that says nothing about whether the
+# model chose a sensible refinement. Measured on qwen3.5 against the sqrt
+# specification: 3 of its 4 proposals were destroyed this way.
+#
+# These aliases contain no backslash, so they survive JSON intact. They are a
+# convenience of the model-facing parser only; L_spec itself is unchanged and
+# still accepts /\ and \/.
+#
+# The word forms are anchored with \b so an identifier that merely contains one
+# -- band, x_or_y, nota -- is left alone. Replacements are plain (non-raw)
+# strings because re.sub reads a backslash in the replacement as a group
+# reference.
+OPERATOR_ALIASES = (
+    (r"!=", "<>"),             # before the `!` rule below
+    (r"&&", "/\\\\"),
+    (r"\|\|", "\\\\/"),
+    (r"\band\b", "/\\\\"),
+    (r"\bor\b", "\\\\/"),
+    (r"\bnot\b", "~"),
+    (r"!(?!=)", "~"),          # `!`, but not `!=`
+)
+
+# `/` immediately followed by a newline, carriage return, tab or quote: what an
+# undoubled /\ becomes once JSON has decoded the escape.
+_MANGLED = re.compile("/[\n\r\t\"]")
+
+
+def normalise_operators(expr_str: str) -> str:
+    """Rewrite backslash-free operator spellings into L_spec syntax."""
+    for pattern, replacement in OPERATOR_ALIASES:
+        expr_str = re.sub(pattern, replacement, expr_str)
+    return expr_str
+
+
+def looks_json_mangled(expr_str: str) -> bool:
+    """True if this expression carries the signature of an unescaped ``/\\``.
+
+    Reported rather than silently repaired: dividing by a parenthesised
+    comparison is meaningless, so this is almost certainly a lost operator, but
+    guessing the author's intent is worse than telling them what went wrong and
+    which spelling avoids it.
+    """
+    return bool(_MANGLED.search(expr_str))
+
 
 def parse_expr(expr_str: str):
+    if looks_json_mangled(expr_str):
+        raise ValueError(
+            "this expression looks like a conjunction whose backslash was "
+            "eaten by JSON escaping. Use && for /\\ and || for \\/ -- they "
+            f"need no backslash and survive JSON intact. Got: {expr_str!r}"
+        )
+    expr_str = normalise_operators(expr_str)
     # Wrap the expression in a dummy specification to parse it using the existing grammar
     dummy_spec_str = f"Precondition: := {expr_str}.\nPostcondition: := true."
     spec = parse_spec(dummy_spec_str)
     return spec.precondition.expr
 
+
+def _load_json(text: str) -> Dict[str, Any]:
+    """Parse the reply as JSON, or recover the JSON object embedded in prose.
+
+    A reasoning model can spend its whole token budget thinking and return an
+    empty `content`, in which case the provider falls back to the reasoning
+    channel -- which is prose with the answer somewhere inside it. Rather than
+    score that as a malformed reply, find the first balanced {...} that parses
+    and has a "law" key.
+    """
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        pass
+
+    for start in (i for i, ch in enumerate(text) if ch == "{"):
+        depth, in_str, escaped = 0, False, False
+        for end in range(start, len(text)):
+            ch = text[end]
+            if in_str:
+                if escaped:
+                    escaped = False
+                elif ch == "\\":
+                    escaped = True
+                elif ch == '"':
+                    in_str = False
+                continue
+            if ch == '"':
+                in_str = True
+            elif ch == "{":
+                depth += 1
+            elif ch == "}":
+                depth -= 1
+                if depth == 0:
+                    try:
+                        candidate = json.loads(text[start:end + 1])
+                    except json.JSONDecodeError:
+                        break
+                    if isinstance(candidate, dict) and "law" in candidate:
+                        return candidate
+                    break
+    raise ValueError(
+        f"no JSON object with a \"law\" key found in the reply: {text[:200]!r}"
+    )
+
+
 def parse_llm_response(response: str) -> Tuple[str, Dict[str, Any]]:
+    """Turn one LLM reply into a (law name, parameters) pair.
+
+    Parameter names, kinds and defaults come from the law's own ``PARAMS``
+    declaration rather than a branch per law here. That branch table was a
+    fourth place where each law's shape was written down -- alongside the
+    registry, the role/assembly definition and the prompt text -- and the one
+    most easily forgotten: when the four extended laws were registered in
+    `1299c6d` this function had no branch for them, so every LLM proposal of
+    one was recorded as an ERROR until `429bdb9`. A law that registers now is
+    parsed correctly without touching this file.
+    """
     # Remove markdown code blocks if any
     response = response.strip()
     if response.startswith("```json"):
@@ -18,33 +134,37 @@ def parse_llm_response(response: str) -> Tuple[str, Dict[str, Any]]:
     if response.endswith("```"):
         response = response[:-3]
     response = response.strip()
-            
-    data = json.loads(response)
+
+    data = _load_json(response)
     law = data.get("law")
-    raw_params = data.get("parameters", {})
-    
-    parsed_params = {}
-    
-    if law == "assignment":
-        parsed_params["variable"] = raw_params.get("variable")
-        parsed_params["expr"] = parse_expr(raw_params.get("expr", "0"))
-    elif law == "sequential":
-        parsed_params["intermediate"] = parse_expr(raw_params.get("intermediate", "true"))
-    elif law == "alternation":
-        parsed_params["guard"] = parse_expr(raw_params.get("guard", "true"))
-    elif law == "iteration":
-        parsed_params["guard"] = parse_expr(raw_params.get("guard", "true"))
-        parsed_params["variant"] = parse_expr(raw_params.get("variant", "0"))
-    elif law == "skip" or law == "initialized_skip":
-        pass
-    elif law == "strengthen_post":
-        parsed_params["intermediate_post"] = parse_expr(raw_params.get("intermediate_post", "true"))
-    elif law == "weaken_pre":
-        parsed_params["intermediate_pre"] = parse_expr(raw_params.get("intermediate_pre", "true"))
-    elif law == "flexible_sequential":
-        for k in ("pre1", "post1", "pre2", "post2"):
-            parsed_params[k] = parse_expr(raw_params.get(k, "true"))
-    else:
-        raise ValueError(f"Unknown law generated by LLM: {law}")
-        
+    raw_params = data.get("parameters", {}) or {}
+
+    law_cls = law_named(law)          # raises UnknownLawError (a ValueError)
+
+    if law_cls.PARAMS is None:
+        raise ValueError(
+            f"{law_cls.__name__} is registered as {law!r} but declares no "
+            f"PARAMS, so its parameters cannot be parsed"
+        )
+
+    parsed_params: Dict[str, Any] = {}
+    for name, kind, default in law_cls.PARAMS:
+        raw = raw_params.get(name, default)
+        if raw is None and default is None:
+            # An optional parameter the model did not supply: leave it out
+            # entirely so the law sees it as absent. Substituting a placeholder
+            # such as `true` is not the same thing -- `iteration` falls back to
+            # the precondition when no invariant is given, and an invariant of
+            # `true` silently replaces that fallback with a useless one.
+            continue
+        if kind == "name":
+            parsed_params[name] = raw
+        elif kind == "expr":
+            parsed_params[name] = parse_expr(raw if raw is not None else "true")
+        else:
+            raise ValueError(
+                f"{law_cls.__name__}.PARAMS declares unknown kind {kind!r} "
+                f"for parameter {name!r}"
+            )
+
     return law, parsed_params

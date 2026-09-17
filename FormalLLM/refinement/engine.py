@@ -1,15 +1,7 @@
 from typing import Dict, Any, Type
 from FormalLLM.lspec.ast import Spec
 from .laws.base import RefinementLaw, RefinementResult
-from .laws.assignment import AssignmentLaw
-from .laws.skip import SkipLaw
-from .laws.sequential import SequentialCompositionLaw
-from .laws.alternation import AlternationLaw
-from .laws.iteration import IterationLaw
-from .laws.strengthen_post import StrengthenPostconditionLaw
-from .laws.weaken_pre import WeakenPreconditionLaw
-from .laws.initialized_skip import InitializedSkipLaw
-from .laws.flexible_sequential import FlexibleSequentialCompositionLaw
+from .laws.registry import LAWS
 from FormalLLM.verification.z3_backend import verify_obligation, VerificationResult
 
 class VerificationError(Exception):
@@ -17,17 +9,10 @@ class VerificationError(Exception):
 
 class RefinementEngine:
     def __init__(self):
-        self.laws: Dict[str, Type[RefinementLaw]] = {
-            "assignment": AssignmentLaw,
-            "skip": SkipLaw,
-            "sequential": SequentialCompositionLaw,
-            "alternation": AlternationLaw,
-            "iteration": IterationLaw,
-            "strengthen_post": StrengthenPostconditionLaw,
-            "weaken_pre": WeakenPreconditionLaw,
-            "initialized_skip": InitializedSkipLaw,
-            "flexible_sequential": FlexibleSequentialCompositionLaw,
-        }
+        # A per-engine copy of the registry, so a caller may restrict the law
+        # set (the benchmark harness does, to make the law set the only
+        # variable between arms) without mutating the global registry.
+        self.laws: Dict[str, Type[RefinementLaw]] = dict(LAWS)
 
     def register_law(self, name: str, law_cls: Type[RefinementLaw]):
         self.laws[name] = law_cls

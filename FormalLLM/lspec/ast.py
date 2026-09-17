@@ -50,6 +50,14 @@ class Definition(ASTNode):
 class Spec(ASTNode):
     precondition: Definition
     postcondition: Definition
+    #: Morgan's frame: the names the program may modify (paper section 2.1,
+    #: `variables : [pre, post]`). Every other name is *rigid* -- it cannot
+    #: change, so what the precondition says about it stays true throughout the
+    #: refinement and may be carried into sub-specifications.
+    #:
+    #: `None` means "unknown", which is treated as "everything may change" and
+    #: reproduces the behaviour of specs written before frames existed.
+    frame: Optional[List[str]] = None
 
 # Expressions
 @dataclass

@@ -11,6 +11,7 @@ from FormalLLM.refinement.graph.status import AttemptStatus, NodeStatus
 from FormalLLM.agent.refiner import AutomatedRefiner, RefinementExhausted
 from FormalLLM.llm.provider import LLMProvider, OllamaProvider
 from FormalLLM.llm.prompts import to_string
+from FormalLLM.lpl.to_python import to_python
 
 
 class BudgetExhausted(Exception):
@@ -124,11 +125,20 @@ def run_trial(case: Dict[str, Any],
     outcome = "UNKNOWN"
     detail = ""
     program = None
+    program_python = None
     try:
         ok = refiner.refine_node(graph, graph.root_id)
         if ok and graph.is_complete(graph.root_id):
             outcome = "SUCCESS"
-            program = program_to_str(graph.reconstruct_program())
+            program_ast = graph.reconstruct_program()
+            program = program_to_str(program_ast)
+            # Executable form of the *verified* tree. Emitting it here rather
+            # than re-deriving it later keeps the code that runs identical to
+            # the code the prover accepted.
+            try:
+                program_python = to_python(program_ast)
+            except Exception as e:
+                detail = f"program emitted but to_python failed: {type(e).__name__}: {e}"
         else:
             outcome = "FAILED"
             detail = "refiner returned without completing the root node"
@@ -156,6 +166,7 @@ def run_trial(case: Dict[str, Any],
         outcome=outcome,
         detail=detail,
         program=program,
+        program_python=program_python,
         law_set=sorted(engine.laws),
         wall_s=round(wall, 2),
         llm_calls=len(calls),

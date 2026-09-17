@@ -44,8 +44,15 @@ def test_fallback_mechanism():
     assert len(accepted_attempts) == 1
     assert accepted_attempts[0].law == "assignment"
     
-    # Check that sequential is in the blacklist for the root node
-    assert "sequential" in refiner.blacklisted_laws_per_node[graph.root_id]
+    # The failed `sequential` step is recorded against its *parameters*, not
+    # blacklisted outright. A law whose sub-specification could not be refined
+    # is usually the right law with the wrong parameters -- an invariant too
+    # weak to discharge the loop body, say -- and banning it after one attempt
+    # forces the model to abandon an approach it should be repairing. It is
+    # only blacklisted once `max_param_attempts` different parameter choices
+    # have failed.
+    assert refiner.param_failures_per_node[(graph.root_id, "sequential")] == 1
+    assert "sequential" not in refiner.blacklisted_laws_per_node[graph.root_id]
 
 
 def test_fallback_discards_succeeded_sibling():
@@ -97,3 +104,74 @@ def test_fallback_root_failure():
     
     with pytest.raises(RefinementExhausted):
         refiner.refine_node(graph, graph.root_id)
+
+
+def test_law_may_be_retried_with_different_parameters():
+    """A deep failure must not ban the law -- only that parameter choice.
+
+    The model's first `iteration` invariant is too weak to discharge the loop
+    body. The old refiner blacklisted `iteration` at that point, so the correct
+    law became unavailable and the search had to wander elsewhere. It should
+    instead be re-proposable with a stronger invariant.
+    """
+    spec = parse_spec(
+        "Frame: x.\n"
+        "Precondition: (N:float)(e:float) := N >= 0 /\ e > 0.\n"
+        "Postcondition: (N:float)(e:float) := x*x <= N /\ N < (x+e)*(x+e)."
+    )
+
+    weak = json.dumps({"law": "iteration", "parameters": {
+        "invariant": "(x * x) <= N",                 # too weak: admits x < 0
+        "guard": "N >= (x + e) * (x + e)", "variant": "N - (x * x)"}})
+    strong = json.dumps({"law": "iteration", "parameters": {
+        "invariant": "(x * x) <= N && x >= 0",       # repaired
+        "guard": "N >= (x + e) * (x + e)", "variant": "N - (x * x)"}})
+    assign_zero = json.dumps({"law": "assignment",
+                              "parameters": {"variable": "x", "expr": "0"}})
+    assign_step = json.dumps({"law": "assignment",
+                              "parameters": {"variable": "x", "expr": "x + e"}})
+
+    # With max_retries=2 the sequence is: root proposes the weak invariant;
+    # init succeeds; the body burns both its retries; the root is re-prompted
+    # and proposes the strong invariant; init and body then succeed.
+    responses = [weak, assign_zero, assign_step, assign_step,
+                 strong, assign_zero, assign_step]
+    refiner = AutomatedRefiner(RefinementEngine(), MockProvider(responses),
+                               max_retries=2)
+    graph = RefinementGraph(spec)
+
+    assert refiner.refine_node(graph, graph.root_id) is True
+    assert "iteration" not in refiner.blacklisted_laws_per_node[graph.root_id]
+
+    laws = [graph.attempts[a].law for a in graph.nodes[graph.root_id].attempts]
+    assert laws.count("iteration") == 2, "iteration should be re-proposed, not banned"
+
+
+def test_subtree_failure_reason_reaches_the_parent():
+    """The parent's retry prompt must carry the counterexample from below."""
+    spec = parse_spec(
+        "Frame: x.\n"
+        "Precondition: (N:float)(e:float) := N >= 0 /\ e > 0.\n"
+        "Postcondition: (N:float)(e:float) := x*x <= N /\ N < (x+e)*(x+e)."
+    )
+    weak = json.dumps({"law": "iteration", "parameters": {
+        "invariant": "(x * x) <= N",
+        "guard": "N >= (x + e) * (x + e)", "variant": "N - (x * x)"}})
+    assign_step = json.dumps({"law": "assignment",
+                              "parameters": {"variable": "x", "expr": "x + e"}})
+
+    assign_zero = json.dumps({"law": "assignment",
+                              "parameters": {"variable": "x", "expr": "0"}})
+    llm = MockProvider([weak, assign_zero, assign_step, assign_step])
+    refiner = AutomatedRefiner(RefinementEngine(), llm, max_retries=2)
+    graph = RefinementGraph(spec)
+    # The scripted replies never repair the invariant, so the root legitimately
+    # gives up; what matters here is what it was told on the way.
+    with pytest.raises(RefinementExhausted):
+        refiner.refine_node(graph, graph.root_id)
+
+    # After the body fails, the next prompt sent for the root must explain why.
+    later = "\n".join(llm.prompts_received[1:])
+    assert "must show" in later or "Counterexample" in later, (
+        "the parent was not told what failed below it"
+    )

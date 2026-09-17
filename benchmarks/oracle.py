@@ -67,6 +67,37 @@ PLAYBOOK: Dict[Tuple[str, str], str] = {
     ("(N:int)(i:int) := ((((N >= 0) /\ (i = 0)) /\ (i < N)) /\ ((N - i) = (N0 - i0)))",
      "(N:int)(i:int) := (((N >= 0) /\ (i = 0)) /\ ((N - i) < (N0 - i0)))"):
         R("assignment", variable="i", expr="i + 1"),
+    # --- C5: the paper's motivating example (Figure 2/3) -------------------
+    # These replay exactly the refinement `manual_sqrt.py` verifies under Z3:
+    # split off an initialisation that establishes the invariant, assign x := 0,
+    # then iterate x := x + e while N >= (x+e)^2, with variant N - x*x.
+    ("(N:float)(e:float) := ((N >= 0) /\ (e > 0))",
+     "(N:float)(e:float) := (((x * x) <= N) /\ (N < ((x + e) * (x + e))))"):
+        R("sequential", intermediate="N >= 0 /\ e > 0 /\ x*x <= N /\ x >= 0"),
+    # part 1: establish the invariant
+    ("(N:float)(e:float) := ((N >= 0) /\ (e > 0))",
+     "(N:float)(e:float) := ((N >= 0) /\ ((e > 0) /\ (((x * x) <= N) /\ (x >= 0))))"):
+        R("assignment", variable="x", expr="0"),
+    # part 2: iterate until the postcondition holds
+    ("(N:float)(e:float) := ((N >= 0) /\ ((e > 0) /\ (((x * x) <= N) /\ (x >= 0))))",
+     "(N:float)(e:float) := (((x * x) <= N) /\ (N < ((x + e) * (x + e))))"):
+        R("iteration", guard="N >= (x+e)*(x+e)", variant="N - x*x"),
+    # loop body
+    ("(N:float)(e:float) := ((((N >= 0) /\ ((e > 0) /\ (((x * x) <= N) /\ (x >= 0)))) /\ (N >= ((x + e) * (x + e)))) /\ ((N - (x * x)) = (N0 - (x0 * x0))))",
+     "(N:float)(e:float) := (((N >= 0) /\ ((e > 0) /\ (((x * x) <= N) /\ (x >= 0)))) /\ ((N - (x * x)) < (N0 - (x0 * x0))))"):
+        R("assignment", variable="x", expr="x + e"),
+    # --- C3 with an LLM-supplied invariant ---------------------------------
+    # Previously unsolvable: the engine pinned the invariant to the
+    # precondition, so `i = 0` had to hold at every iteration and no body could
+    # preserve it. With the invariant supplied (paper Table 5) the natural
+    # `i <= N` works and the case is solved in three moves.
+    ("(N:int)(i:int) := ((N >= 0) /\ (i = 0))", "(N:int)(i:int) := (i >= N)"):
+        R("iteration", invariant="i <= N", guard="i < N", variant="N - i"),
+    ("(N:int)(i:int) := ((N >= 0) /\ (i = 0))",
+     "(N:int)(i:int) := ((N >= 0) /\ (i <= N))"): R("skip"),
+    ("(N:int)(i:int) := ((((N >= 0) /\ (i <= N)) /\ (i < N)) /\ ((N - i) = (N0 - i0)))",
+     "(N:int)(i:int) := (((N >= 0) /\ (i <= N)) /\ ((N - i) < (N0 - i0)))"):
+        R("assignment", variable="i", expr="i + 1"),
 }
 
 

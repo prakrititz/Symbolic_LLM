@@ -1,159 +1,135 @@
-import copy
-from typing import Set
-from .ast import *
+"""Capture-avoiding substitution over L_spec, driven by :mod:`lspec.walk`.
 
-def get_free_vars(node: ASTNode, bound_vars: Set[str] = None) -> Set[str]:
-    if bound_vars is None: bound_vars = set()
-    free_vars = set()
-    
-    if isinstance(node, Variable) or isinstance(node, Const):
-        if node.name not in bound_vars:
-            free_vars.add(node.name)
-    elif isinstance(node, Definition) or isinstance(node, QuantifiedExpr):
-        new_bound = bound_vars.copy()
-        for p in node.params:
-            new_bound.add(p.name)
-        free_vars.update(get_free_vars(node.expr, new_bound))
-    elif isinstance(node, BinaryOp):
-        free_vars.update(get_free_vars(node.left, bound_vars))
-        free_vars.update(get_free_vars(node.right, bound_vars))
-    elif isinstance(node, UnaryOp):
-        free_vars.update(get_free_vars(node.expr, bound_vars))
-    elif isinstance(node, ArraySelect):
-        if node.array not in bound_vars:
-            free_vars.add(node.array)
-        free_vars.update(get_free_vars(node.index, bound_vars))
-    elif isinstance(node, ArraySlice):
-        if node.array not in bound_vars:
-            free_vars.add(node.array)
-        free_vars.update(get_free_vars(node.start, bound_vars))
-        free_vars.update(get_free_vars(node.end, bound_vars))
-    elif isinstance(node, Spec):
-        free_vars.update(get_free_vars(node.precondition, bound_vars))
-        free_vars.update(get_free_vars(node.postcondition, bound_vars))
-        
-    return free_vars
+Each function here used to carry its own ``isinstance`` chain listing every
+node type. They are now generic: structure comes from the walk registry, so a
+node type registered there is handled by all three without further edits, and
+one that is not registered raises instead of being silently deep-copied.
+
+Previous-state references (``x0``) are deliberately inert. ``x0`` denotes the
+value of ``x`` *before* the step, so it is neither a free occurrence of ``x``
+(:func:`get_free_vars` does not report it), nor a target of substitution for
+``x``, nor renamed by :func:`alpha_rename`. That is why
+``VariablePreviousState.name`` is registered ``ATOM`` rather than ``NAME``.
+"""
+
+import copy
+from typing import Optional, Set
+
+from . import walk
+from .ast import ASTNode, Expr, Param, Variable, Const
+
+
+def get_free_vars(node: ASTNode, bound_vars: Optional[Set[str]] = None) -> Set[str]:
+    """Names occurring free in ``node``.
+
+    A node's own ``NAME`` fields are resolved against the *enclosing* scope;
+    its binders extend the scope of its children only. This ordering is what
+    makes ``forall (x:int) x > 0`` report no free ``x`` while ``a[x]`` reports
+    both ``a`` and ``x``.
+    """
+    bound = set() if bound_vars is None else bound_vars
+
+    free = {name for name in walk.names_of(node) if name not in bound}
+
+    inner = bound | {p.name for p in walk.binders_of(node)}
+    for child in walk.children(node):
+        free |= get_free_vars(child, inner)
+    return free
+
 
 def alpha_rename(node: ASTNode, old_name: str, new_name: str) -> ASTNode:
-    if isinstance(node, Definition):
-        params = [Param(new_name if p.name == old_name else p.name, p.type_) for p in node.params]
-        return Definition(node.name, params, alpha_rename(node.expr, old_name, new_name))
-    elif isinstance(node, QuantifiedExpr):
-        params = [Param(new_name if p.name == old_name else p.name, p.type_) for p in node.params]
-        return QuantifiedExpr(node.quantifier, params, alpha_rename(node.expr, old_name, new_name))
-    elif isinstance(node, Variable):
-        return Variable(new_name) if node.name == old_name else Variable(node.name)
-    elif isinstance(node, Const):
-        return Const(new_name) if node.name == old_name else Const(node.name)
-    elif isinstance(node, BinaryOp):
-        return BinaryOp(alpha_rename(node.left, old_name, new_name), node.op, alpha_rename(node.right, old_name, new_name))
-    elif isinstance(node, UnaryOp):
-        return UnaryOp(node.op, alpha_rename(node.expr, old_name, new_name))
-    elif isinstance(node, ArraySelect):
-        arr = new_name if node.array == old_name else node.array
-        return ArraySelect(arr, alpha_rename(node.index, old_name, new_name))
-    elif isinstance(node, ArraySlice):
-        arr = new_name if node.array == old_name else node.array
-        return ArraySlice(arr, alpha_rename(node.start, old_name, new_name), alpha_rename(node.end, old_name, new_name))
-    elif isinstance(node, Spec):
-        return Spec(alpha_rename(node.precondition, old_name, new_name), alpha_rename(node.postcondition, old_name, new_name))
-    return copy.deepcopy(node)
+    """Rename every occurrence of ``old_name`` to ``new_name``, binders included.
+
+    This is a whole-subtree rename used to move a binder out of the way before
+    substituting; it does not stop at shadowing binders, because the caller's
+    intent is precisely to rename the binder as well as its uses.
+
+    The input node is never mutated -- the result is freshly built.
+    """
+    overrides = {}
+    for attr, kind in walk.schema_of(node):
+        value = getattr(node, attr)
+        if kind == walk.NAME:
+            overrides[attr] = new_name if value == old_name else value
+        elif kind == walk.BINDERS:
+            overrides[attr] = [
+                Param(new_name if p.name == old_name else p.name, p.type_)
+                for p in value
+            ]
+        elif kind == walk.NODE:
+            overrides[attr] = alpha_rename(value, old_name, new_name)
+        elif kind == walk.NODES:
+            overrides[attr] = [alpha_rename(c, old_name, new_name) for c in value]
+    return walk.rebuild(node, **overrides)
+
+
+def _fresh_name(base: str, taken: Set[str]) -> str:
+    """A variant of ``base`` not in ``taken``.
+
+    The old code used ``f"{base}_fresh"`` unconditionally, which collides as
+    soon as two binders in one formula share a name or a spec already mentions
+    ``x_fresh``.
+    """
+    candidate = f"{base}_fresh"
+    while candidate in taken:
+        candidate += "_"
+    return candidate
 
 
 def substitute(node: ASTNode, var_name: str, replacement: Expr) -> ASTNode:
+    """``node[var_name := replacement]``, avoiding capture.
+
+    Substitution stops at a binder for ``var_name`` (the occurrence is
+    shadowed). Binders whose names occur free in ``replacement`` are renamed
+    apart first, so a replacement expression never has its own free variables
+    captured.
     """
-    Substitutes occurrences of `var_name` with `replacement` in the `node`.
-    Returns a new ASTNode with substitutions applied, applying alpha-renaming 
-    to avoid capture of free variables in `replacement`.
-    """
-    if isinstance(node, Spec):
-        return Spec(
-            substitute(node.precondition, var_name, replacement),
-            substitute(node.postcondition, var_name, replacement)
-        )
-        
-    elif isinstance(node, Definition):
-        if any(p.name == var_name for p in node.params):
-            return copy.deepcopy(node) # Shadowed
-        
-        expr = node.expr
-        repl_free_vars = get_free_vars(replacement)
-        for p in node.params:
-            if p.name in repl_free_vars:
-                # Alpha rename to avoid capture
-                fresh = f"{p.name}_fresh"
-                expr = alpha_rename(expr, p.name, fresh)
-                p.name = fresh # Rename the param itself for the returned node
-                
-        return Definition(
-            node.name,
-            copy.deepcopy(node.params),
-            substitute(expr, var_name, replacement)
-        )
-        
-    elif isinstance(node, QuantifiedExpr):
-        if any(p.name == var_name for p in node.params):
-            return copy.deepcopy(node) # Shadowed
-            
-        expr = node.expr
-        new_params = copy.deepcopy(node.params)
-        repl_free_vars = get_free_vars(replacement)
-        for p in new_params:
-            if p.name in repl_free_vars:
-                # Alpha rename
-                fresh = f"{p.name}_fresh"
-                expr = alpha_rename(expr, p.name, fresh)
-                p.name = fresh
-                
-        return QuantifiedExpr(
-            node.quantifier,
-            new_params,
-            substitute(expr, var_name, replacement)
-        )
-        
-    elif isinstance(node, BinaryOp):
-        return BinaryOp(
-            substitute(node.left, var_name, replacement),
-            node.op,
-            substitute(node.right, var_name, replacement)
-        )
-        
-    elif isinstance(node, UnaryOp):
-        return UnaryOp(
-            node.op,
-            substitute(node.expr, var_name, replacement)
-        )
-        
-    elif isinstance(node, Variable):
-        if node.name == var_name:
-            return copy.deepcopy(replacement)
-        return Variable(node.name)
-        
-    elif isinstance(node, Const):
-        if node.name == var_name:
-            return copy.deepcopy(replacement)
-        return Const(node.name)
-        
-    elif isinstance(node, VariablePreviousState):
-        return VariablePreviousState(node.name)
-        
-    elif isinstance(node, Number):
-        return Number(node.value)
-        
-    elif isinstance(node, BooleanConst):
-        return BooleanConst(node.value)
-        
-    elif isinstance(node, ArraySelect):
-        return ArraySelect(
-            replacement if node.array == var_name and isinstance(replacement, str) else node.array, # Simplified array name sub
-            substitute(node.index, var_name, replacement)
-        )
-        
-    elif isinstance(node, ArraySlice):
-        return ArraySlice(
-            replacement if node.array == var_name and isinstance(replacement, str) else node.array,
-            substitute(node.start, var_name, replacement),
-            substitute(node.end, var_name, replacement)
-        )
-        
-    return copy.deepcopy(node)
+    binders = walk.binders_of(node)
+
+    if any(p.name == var_name for p in binders):
+        return copy.deepcopy(node)
+
+    if binders:
+        # Rename apart any binder that would capture a free variable of the
+        # replacement. The rename rebuilds the node, so -- unlike the previous
+        # implementation, which assigned `p.name = fresh` straight onto the
+        # caller's params list -- the input spec is left untouched.
+        repl_free = get_free_vars(replacement)
+        taken = repl_free | get_free_vars(node) | {var_name}
+        for p in binders:
+            if p.name in repl_free:
+                fresh = _fresh_name(p.name, taken)
+                taken.add(fresh)
+                node = alpha_rename(node, p.name, fresh)
+
+    # Base case: a name reference that *is* the variable becomes the
+    # replacement outright. Every other node keeps its shape and recurses.
+    if isinstance(node, (Variable, Const)) and node.name == var_name:
+        return copy.deepcopy(replacement)
+
+    overrides = {}
+    for attr, kind in walk.schema_of(node):
+        value = getattr(node, attr)
+        if kind == walk.NAME and value == var_name:
+            # A NAME field holds a bare identifier, not an expression -- the
+            # array name in `a[i]`. Only a replacement that is itself an
+            # identifier can go there; anything else (`a[i] := b[j] + 1`) has
+            # no representation in the AST, so say so rather than silently
+            # dropping the substitution, as the previous `isinstance(
+            # replacement, str)` guard did (it was never true).
+            if isinstance(replacement, (Variable, Const)):
+                overrides[attr] = replacement.name
+            else:
+                raise NotImplementedError(
+                    f"cannot substitute {type(replacement).__name__} for the "
+                    f"array name {var_name!r} in {type(node).__name__}: only a "
+                    f"variable or constant can name an array"
+                )
+        elif kind == walk.NODE:
+            overrides[attr] = substitute(value, var_name, replacement)
+        elif kind == walk.NODES:
+            overrides[attr] = [substitute(c, var_name, replacement) for c in value]
+        elif kind == walk.BINDERS:
+            overrides[attr] = copy.deepcopy(value)
+
+    return walk.rebuild(node, **overrides)

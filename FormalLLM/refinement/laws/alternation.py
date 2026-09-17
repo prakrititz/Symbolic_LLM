@@ -2,6 +2,8 @@ import copy
 from typing import Dict, Any
 from .base import RefinementLaw, RefinementResult
 from FormalLLM.lspec.ast import Spec, Definition, BinaryOp, UnaryOp
+from FormalLLM.lpl.ast import IfElse
+from FormalLLM.refinement.frame import derive as _derive
 
 class AlternationLaw(RefinementLaw):
     r"""
@@ -12,6 +14,7 @@ class AlternationLaw(RefinementLaw):
     (G \/ ¬G is a tautology), so it doesn't generate a separate P ⇒ G ∨ ¬G 
     proof obligation like the core Lemma 2.6 would for multiple guards.
     """
+    PARAMS = (("guard", "expr", "true"),)
     def apply(self, spec: Spec, parameters: Dict[str, Any]) -> RefinementResult:
         guard_expr = parameters.get('guard')
         
@@ -19,7 +22,7 @@ class AlternationLaw(RefinementLaw):
             raise ValueError("AlternationLaw requires 'guard' parameter.")
             
         # Create sub-spec 1: [P ∧ G, Q]
-        spec1 = Spec(
+        spec1 = _derive(spec, 
             precondition=Definition(
                 name=None,
                 params=copy.deepcopy(spec.precondition.params),
@@ -29,7 +32,7 @@ class AlternationLaw(RefinementLaw):
         )
         
         # Create sub-spec 2: [P ∧ ¬G, Q]
-        spec2 = Spec(
+        spec2 = _derive(spec, 
             precondition=Definition(
                 name=None,
                 params=copy.deepcopy(spec.precondition.params),
@@ -39,5 +42,10 @@ class AlternationLaw(RefinementLaw):
         )
         
         return RefinementResult(
-            sub_specs=[spec1, spec2]
+            sub_specs=[spec1, spec2],
+            roles=["then", "else"],
         )
+
+    @classmethod
+    def build_program(cls, parameters, children):
+        return IfElse(parameters["guard"], children["then"], children["else"])

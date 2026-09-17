@@ -1,5 +1,6 @@
 import os
 from lark import Lark, Transformer, v_args
+from . import walk
 from .ast import *
 
 # Load grammar
@@ -18,8 +19,21 @@ class LSpecTransformer(Transformer):
     def t_char(self): return CharType()
     def t_array(self, t): return ArrayType(t)
 
-    def spec(self, pre, post):
-        return Spec(pre, post)
+    def spec(self, *args):
+        # `Frame:` is optional, so the frame list may or may not be present.
+        frame = args[0] if isinstance(args[0], list) else None
+        pre, post = args[-2], args[-1]
+        return Spec(pre, post, frame)
+
+    def frame(self, *entries):
+        return list(entries)
+
+    def frame_var(self, name, type_=None):
+        # An untyped frame variable is still usable -- it just gives the SMT
+        # backend no sort to declare, so the name falls back to Real. Declaring
+        # `Frame: q:int` is what keeps an integer program from being reasoned
+        # about over the rationals.
+        return Param(str(name), type_)
 
     def definition(self, *args):
         # args could be: [expr] or [name, expr] or [param1, param2, expr] or [name, param1, expr]
@@ -84,40 +98,34 @@ class LSpecTransformer(Transformer):
     def array_slice(self, name, start, end):
         return ArraySlice(str(name), start, end)
 
-def resolve_names(node: ASTNode, bound_vars: set):
+def resolve_names(node: ASTNode, bound_vars: set) -> ASTNode:
+    """Classify each generic ``Variable`` as bound (``Variable``) or free (``Const``).
+
+    A name is a ``Const`` exactly when no enclosing ``Definition`` params list
+    or quantifier binds it. Structure comes from :mod:`lspec.walk`, so a node
+    type added later is scoped correctly without touching this function.
+
+    This returns a rebuilt tree. The previous version walked the AST for effect
+    and reclassified in place via ``node.__class__ = Const``, which mutates the
+    object every alias of it can see -- including nodes shared into an already
+    constructed spec -- and depends on ``Variable`` and ``Const`` happening to
+    have identical layouts.
     """
-    Second pass to classify generic Variables into Variables or Consts based on bound variables.
-    """
-    if isinstance(node, Spec):
-        resolve_names(node.precondition, bound_vars.copy())
-        resolve_names(node.postcondition, bound_vars.copy())
-    elif isinstance(node, Definition):
-        new_bound = bound_vars.copy()
-        for p in node.params:
-            new_bound.add(p.name)
-        resolve_names(node.expr, new_bound)
-    elif isinstance(node, QuantifiedExpr):
-        new_bound = bound_vars.copy()
-        for p in node.params:
-            new_bound.add(p.name)
-        resolve_names(node.expr, new_bound)
-    elif isinstance(node, BinaryOp):
-        resolve_names(node.left, bound_vars)
-        resolve_names(node.right, bound_vars)
-    elif isinstance(node, UnaryOp):
-        resolve_names(node.expr, bound_vars)
-    elif isinstance(node, ArraySelect):
-        resolve_names(node.index, bound_vars)
-    elif isinstance(node, ArraySlice):
-        resolve_names(node.start, bound_vars)
-        resolve_names(node.end, bound_vars)
-    elif isinstance(node, Variable):
-        # This is the core logic: if not bound, it is a Const.
-        if node.name not in bound_vars:
-            node.__class__ = Const # Dynamically change class (dataclass doesn't mind)
+    inner = bound_vars | {p.name for p in walk.binders_of(node)}
+
+    if isinstance(node, Variable) and node.name not in bound_vars:
+        return Const(node.name)
+
+    overrides = {}
+    for attr, kind in walk.schema_of(node):
+        value = getattr(node, attr)
+        if kind == walk.NODE:
+            overrides[attr] = resolve_names(value, inner)
+        elif kind == walk.NODES:
+            overrides[attr] = [resolve_names(c, inner) for c in value]
+    return walk.rebuild(node, **overrides)
 
 def parse_spec(spec_str: str) -> Spec:
     tree = lspec_parser.parse(spec_str)
     ast = LSpecTransformer().transform(tree)
-    resolve_names(ast, set())
-    return ast
+    return resolve_names(ast, set())

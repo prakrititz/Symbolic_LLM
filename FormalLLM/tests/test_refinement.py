@@ -38,5 +38,11 @@ def test_invalid_assignment():
             "expr": BinaryOp(Variable("x"), "+", Number("2"))
         })
         
-    assert "Refinement invalid" in str(excinfo.value)
-    assert "Counterexample found" in str(excinfo.value)
+    message = str(excinfo.value)
+    assert "Refinement invalid" in message
+    assert "Counterexample" in message
+    # The message must say which obligation failed and what it had to show, not
+    # just list variable values: a bare counterexample gives the model nothing
+    # to act on.
+    assert "P => Q[x := E]" in message
+    assert "must show" in message

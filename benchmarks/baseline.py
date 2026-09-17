@@ -18,8 +18,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from benchmarks.cases import CASES
 from benchmarks.baseline_cases import BASELINE, UNSATISFIABLE
-from benchmarks.run_bench import CONFIGS
-from FormalLLM.llm.provider import OllamaProvider
+from benchmarks.run_bench import CONFIGS, REMOTE_BASE_URL, expand_configs
+from FormalLLM.llm.provider import OllamaProvider, OpenAIChatProvider
 
 CODE_ROOT = "benchmarks/baseline_code"
 
@@ -56,6 +56,32 @@ def extract_code(text: str) -> str:
         if ln.startswith(("def ", "import ", "from ")):
             return "\n".join(lines[i:]).strip()
     return text
+
+
+# The unrestricted prompt above lets a model answer `sqrt(N)` with
+# `math.sqrt(N)`. That is correct code, but it does not attempt the algorithm
+# the specification describes, so it cannot exhibit the defects the paper's
+# Figure 1 is about -- and it is not comparable with the refinement arm, whose
+# L_pl has no function calls at all. This variant removes the shortcut, making
+# both arms synthesise the algorithm.
+PROMPT_NO_STDLIB = PROMPT.rstrip() + """
+- Do NOT import any module, and do NOT call any library function.
+  In particular math.sqrt, math.pow, abs, min, max, sorted and the ** operator
+  are all forbidden. Use only arithmetic (+ - * /), comparisons, assignment,
+  while loops and if statements -- the same constructs the specification
+  language provides.
+"""
+
+#: Constructs that mean the model took a library shortcut rather than
+#: synthesising the algorithm.
+LIBRARY_MARKERS = ("import ", "math.", "sqrt", "**", "abs(", "min(", "max(",
+                   "sorted(", "pow(")
+
+
+def uses_library(code: str) -> list:
+    """Which forbidden constructs appear in `code` (ignoring comments)."""
+    body = "\n".join(l for l in code.splitlines() if not l.lstrip().startswith("#"))
+    return [m for m in LIBRARY_MARKERS if m in body]
 
 
 RUNNER = r'''
@@ -120,6 +146,32 @@ def score(case_id, outcome):
     return passed, len(outcome["results"]), None
 
 
+def make_code_provider(cfg, temperature, timeout):
+    """A provider configured for free-form code, not a JSON law choice.
+
+    `response_format` is left unset in both branches: this arm wants Python
+    source, and constraining the reply to a JSON object would make the model
+    wrap its code in a string.
+    """
+    if cfg["kind"] == "openai":
+        return OpenAIChatProvider(
+            model_name=cfg["model"],
+            base_url=REMOTE_BASE_URL,
+            temperature=temperature,
+            max_tokens=2048,
+            response_format=None,
+            timeout=timeout,
+        )
+    return OllamaProvider(
+        model_name=cfg["model"], think=cfg["think"],
+        # Reasoning models spend hundreds of tokens thinking before the
+        # answer; too small a cap truncates them mid-thought.
+        options={"temperature": temperature,
+                 "num_predict": 4096 if cfg["think"] else 900},
+        response_format=None,      # free-form text: we want code, not JSON
+    )
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--configs", nargs="+",
@@ -127,8 +179,12 @@ def main():
                              "ornith", "ornith-think"])
     ap.add_argument("--repeats", type=int, default=1)
     ap.add_argument("--temperature", type=float, default=0.2)
+    ap.add_argument("--timeout", type=int, default=900,
+                    help="per-call timeout in seconds for hosted models")
+    ap.add_argument("--cases", nargs="+", default=None)
     ap.add_argument("--out", default="benchmarks/results/baseline.jsonl")
     args = ap.parse_args()
+    args.configs = expand_configs(args.configs)
 
     os.makedirs(os.path.dirname(args.out), exist_ok=True)
     started = time.time()
@@ -138,18 +194,15 @@ def main():
             cfg = CONFIGS[cfg_name]
             outdir = os.path.join(CODE_ROOT, cfg_name)
             os.makedirs(outdir, exist_ok=True)
-            provider = OllamaProvider(
-                model_name=cfg["model"], think=cfg["think"],
-                # Reasoning models spend hundreds of tokens thinking before the
-                # answer; too small a cap truncates them mid-thought.
-                options={"temperature": args.temperature,
-                         "num_predict": 4096 if cfg["think"] else 900},
-                response_format=None,      # free-form text: we want code, not JSON
-            )
+            provider = make_code_provider(cfg, args.temperature, args.timeout)
             # Plain text, not JSON: this baseline wants code, not a law choice.
             provider_generate = provider.generate
 
             for case in CASES:
+                if args.cases is not None and case["id"] not in args.cases:
+                    continue
+                if case["id"] not in BASELINE:
+                    continue
                 spec = BASELINE[case["id"]]
                 for r in range(args.repeats):
                     prompt = PROMPT.format(nl=spec["nl"], spec=case["spec"].strip(),

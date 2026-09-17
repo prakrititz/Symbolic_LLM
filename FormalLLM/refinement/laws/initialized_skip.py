@@ -3,6 +3,7 @@ from .base import RefinementLaw, RefinementResult
 from FormalLLM.lspec.ast import Spec, BinaryOp, Variable, VariablePreviousState
 from FormalLLM.lpl.ast import Skip
 from FormalLLM.verification.proof_obligations import ProofObligation
+from FormalLLM.refinement.frame import obligation_params
 
 class InitializedSkipLaw(RefinementLaw):
     """
@@ -11,6 +12,7 @@ class InitializedSkipLaw(RefinementLaw):
     This applies x = x_prev for every variant x in the specification.
     Constants are ignored.
     """
+    PARAMS = ()
     def apply(self, spec: Spec, parameters: Dict[str, Any]) -> RefinementResult:
         assumptions = [spec.precondition.expr]
         
@@ -27,7 +29,8 @@ class InitializedSkipLaw(RefinementLaw):
         obligation = ProofObligation(
             assumptions=assumptions,
             goal=spec.postcondition.expr,
-            params=list(spec.precondition.params) + list(spec.postcondition.params)
+            params=obligation_params(spec),
+            description="skip is only valid when the precondition already implies the postcondition: P => Q",
         )
         
         program = Skip()
