@@ -86,7 +86,7 @@ def make_provider(cfg, temperature, timeout=900):
             # Reasoning models spend hundreds of tokens thinking before the
             # answer; at 512 gpt-oss returned no content at all and only its
             # reasoning channel, which is prose rather than the JSON we need.
-            max_tokens=cfg.get("max_tokens", 2048),
+            max_tokens=cfg.get("max_tokens", 4096),
             # A hosted 120B behind a tunnel answers in tens of seconds, and far
             # longer on a cold load, so the per-call timeout is generous. The
             # per-trial call budget still bounds the total.
@@ -99,7 +99,7 @@ def make_provider(cfg, temperature, timeout=900):
         # 128k+ context and Ollama sizes the KV cache to it, which pushed the
         # server past 12 GB resident and got runs OOM-killed. Our prompts are
         # ~1-2k tokens, so 4096 is ample.
-        options={"temperature": temperature, "num_predict": 512,
+        options={"temperature": temperature, "num_predict": 4096,
                  "num_ctx": 4096},
     )
 

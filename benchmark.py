@@ -52,7 +52,7 @@ def main():
     provider = OllamaProvider(model_name=model_name)
         
     engine = RefinementEngine()
-    refiner = AutomatedRefiner(engine, provider, max_retries=3)
+    refiner = AutomatedRefiner(engine, provider, max_retries=100)
     graph = RefinementGraph(spec)
     
     try:

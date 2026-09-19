@@ -16,7 +16,7 @@ the study: the refinement arm's code should be correct by construction, and the
 direct arm's should show the failure modes the paper reports in Figure 1 --
 wrong bounds, and loops that never terminate.
 
-    FORMALLLM_REMOTE_AUTH=... python benchmarks/study3.py --configs all
+    FORMALLLM_REMOTE_AUTH=... python benchmarks/run_bench.py --configs all
 """
 import argparse
 import json
@@ -37,7 +37,6 @@ from benchmarks.harness import run_trial
 
 from FormalLLM.lpl.to_python import to_python
 
-CODE_ROOT = "benchmarks/study3_code"
 
 
 def wrap_as_function(program_src: str, signature: str, output_var: str) -> str:
@@ -90,7 +89,7 @@ def refinement_arm(case, cfg_name, cfg, repeat, args):
         row["status"] = "emit_failed"
         return row
 
-    outdir = os.path.join(CODE_ROOT, cfg_name)
+    outdir = os.path.join(args.code_root, cfg_name)
     os.makedirs(outdir, exist_ok=True)
     suffix = "" if args.repeats == 1 else f"_r{repeat}"
     path = os.path.join(outdir, f"{case['id']}_refined{suffix}.py")
@@ -135,7 +134,7 @@ def direct_arm(case, cfg_name, cfg, repeat, args, no_stdlib=False):
         raw, error = "", f"{type(e).__name__}: {e}"
     latency = time.time() - t0
 
-    outdir = os.path.join(CODE_ROOT, cfg_name)
+    outdir = os.path.join(args.code_root, cfg_name)
     os.makedirs(outdir, exist_ok=True)
     suffix = "" if args.repeats == 1 else f"_r{repeat}"
     tag = "direct_nostdlib" if no_stdlib else "direct"
@@ -184,7 +183,9 @@ def main():
                     help="the specification variable the wrapped function returns")
     ap.add_argument("--lenient-variant", action="store_true",
                     help="Disable the 0 <= V strict variant bound check (for ablation studies)")
-    ap.add_argument("--out", default="benchmarks/results/results_study3.jsonl")
+    ap.add_argument("--code-root", default="benchmarks/study_code",
+                    help="Directory to dump the generated python modules")
+    ap.add_argument("--out", default="benchmarks/results/results_study.jsonl")
     args = ap.parse_args()
     
     if args.lenient_variant:
@@ -196,7 +197,7 @@ def main():
     configs = expand_configs(args.configs)
     cases = [CASES_BY_ID[c] for c in args.cases]
     os.makedirs(os.path.dirname(args.out), exist_ok=True)
-    os.makedirs(CODE_ROOT, exist_ok=True)
+    os.makedirs(args.code_root, exist_ok=True)
     started = time.time()
 
     with open(args.out, "a", encoding="utf-8") as fh:
@@ -232,7 +233,7 @@ def main():
                               f"{row.get('wall_s', 0):7.1f}s", flush=True)
 
     print(f"\nDone in {time.time()-started:.1f}s -> {args.out}")
-    print(f"Generated code under {CODE_ROOT}/<config>/")
+    print(f"Generated code under {args.code_root}/<config>/")
 
 
 if __name__ == "__main__":

@@ -26,13 +26,13 @@ class InstrumentedProvider(LLMProvider):
         self.budget = budget
         self.calls: List[Dict[str, Any]] = []
 
-    def generate(self, prompt: str) -> str:
+    def generate(self, prompt: str, max_tokens: int = None) -> str:
         if len(self.calls) >= self.budget:
             raise BudgetExhausted(f"LLM call budget of {self.budget} exhausted")
         t0 = time.time()
         error = None
         try:
-            text = self.inner.generate(prompt)
+            text = self.inner.generate(prompt, max_tokens=max_tokens)
         except Exception as e:          # network / ollama failure
             text = ""
             error = f"{type(e).__name__}: {e}"
@@ -118,8 +118,10 @@ def run_trial(case: Dict[str, Any],
         # The refiner reads engine.laws for both TOTAL_LAWS and the prompt, so
         # filtering here removes the law from advertising, parsing and search.
         engine.laws = {k: v for k, v in engine.laws.items() if k in law_set}
+    use_multi_turn = True
     refiner = AutomatedRefiner(engine, inst, max_retries=max_retries,
-                               max_depth=max_depth)
+                               max_depth=max_depth,
+                               use_multi_turn=use_multi_turn)
 
     t0 = time.time()
     outcome = "UNKNOWN"

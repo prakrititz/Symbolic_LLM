@@ -1,15 +1,51 @@
 from abc import ABC, abstractmethod
 import base64
 import json
-import os
 import socket
+import sys
 import time
+import threading
+import itertools
 import urllib.request
 import urllib.error
+import os
+
+class Spinner:
+    def __init__(self, message="Waiting for LLM..."):
+        self.spinner = itertools.cycle(['-', '\\', '|', '/'])
+        self.busy = False
+        self.spinner_thread = None
+        self.message = message
+
+    def spinner_task(self):
+        if not sys.stdout.isatty():
+            sys.stdout.write(f"{self.message}\n")
+            sys.stdout.flush()
+            return
+            
+        try:
+            while self.busy:
+                sys.stdout.write(f"\r{next(self.spinner)} {self.message}")
+                sys.stdout.flush()
+                time.sleep(0.1)
+            sys.stdout.write('\r' + ' ' * (len(self.message) + 2) + '\r')
+        except Exception:
+            pass
+
+    def __enter__(self):
+        self.busy = True
+        self.spinner_thread = threading.Thread(target=self.spinner_task)
+        self.spinner_thread.start()
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.busy = False
+        if self.spinner_thread:
+            self.spinner_thread.join()
+
 
 class LLMProvider(ABC):
     @abstractmethod
-    def generate(self, prompt: str) -> str:
+    def generate(self, prompt: str, max_tokens: int = None) -> str:
         """
         Takes a prompt string and returns the generated text from the LLM.
         """
@@ -25,7 +61,7 @@ class MockProvider(LLMProvider):
         self.call_count = 0
         self.prompts_received = []
 
-    def generate(self, prompt: str) -> str:
+    def generate(self, prompt: str, max_tokens: int = None) -> str:
         self.prompts_received.append(prompt)
         if self.call_count < len(self.responses):
             response = self.responses[self.call_count]
@@ -64,7 +100,13 @@ class OllamaProvider(LLMProvider):
         self.keep_alive = keep_alive
         self.last_meta = {}
 
-    def generate(self, prompt: str) -> str:
+    def generate(self, prompt: str, max_tokens: int = None) -> str:
+        print("\n" + "="*50)
+        print("=== LLM PROMPT ===")
+        print("="*50)
+        print(prompt)
+        print("="*50 + "\n")
+        
         url = f"{self.base_url}/api/generate"
 
         # We explicitly request JSON format to help the model adhere to our schema
@@ -76,8 +118,11 @@ class OllamaProvider(LLMProvider):
         }
         if self.response_format:
             data["format"] = self.response_format
-        if self.options:
-            data["options"] = self.options
+        options = self.options.copy() if self.options else {}
+        if max_tokens is not None:
+            options["num_predict"] = max_tokens
+        if options:
+            data["options"] = options
         if self.think is not None:
             data["think"] = self.think
 
@@ -89,8 +134,9 @@ class OllamaProvider(LLMProvider):
         )
 
         try:
-            with urllib.request.urlopen(req, timeout=self.timeout) as response:
-                result = json.loads(response.read().decode('utf-8'))
+            with Spinner(f"Waiting for Ollama ({self.model_name})..."):
+                with urllib.request.urlopen(req, timeout=self.timeout) as response:
+                    result = json.loads(response.read().decode('utf-8'))
         except urllib.error.URLError as e:
             raise Exception(f"Failed to connect to Ollama at {self.base_url}. Is Ollama running? Error: {e}")
 
@@ -108,6 +154,13 @@ class OllamaProvider(LLMProvider):
             if thinking.strip():
                 self.last_meta["used_thinking_channel"] = True
                 text = thinking
+                
+        print("\n" + "="*50)
+        print("=== LLM RESPONSE ===")
+        print("="*50)
+        print(text)
+        print("="*50 + "\n")
+        
         return text
 
 
@@ -139,7 +192,7 @@ class OpenAIChatProvider(LLMProvider):
                  auth: str = None,
                  auth_env: str = "FORMALLLM_REMOTE_AUTH",
                  temperature: float = 0.2,
-                 max_tokens: int = 512,
+                 max_tokens: int = 4096,
                  response_format: str = "json_object",
                  timeout: int = 900,
                  stream: bool = True,
@@ -179,7 +232,13 @@ class OpenAIChatProvider(LLMProvider):
             headers["Authorization"] = f"Bearer {token}"
         return headers
 
-    def generate(self, prompt: str) -> str:
+    def generate(self, prompt: str, max_tokens: int = None) -> str:
+        print("\n" + "="*50)
+        print("=== LLM PROMPT ===")
+        print("="*50)
+        print(prompt)
+        print("="*50 + "\n")
+        
         url = f"{self.base_url}/chat/completions"
 
         data = {
@@ -187,7 +246,7 @@ class OpenAIChatProvider(LLMProvider):
             "messages": [{"role": "user", "content": prompt}],
             "stream": self.stream,
             "temperature": self.temperature,
-            "max_tokens": self.max_tokens,
+            "max_tokens": max_tokens if max_tokens is not None else self.max_tokens,
         }
         if self.response_format:
             data["response_format"] = {"type": self.response_format}
@@ -213,10 +272,14 @@ class OpenAIChatProvider(LLMProvider):
         last_error = None
         for attempt in range(self.max_transport_retries):
             try:
-                with urllib.request.urlopen(req, timeout=self.timeout) as response:
-                    if self.stream:
+                if self.stream:
+                    print(f"\n[{self.model_name} is thinking (Live Stream)...]")
+                    with urllib.request.urlopen(req, timeout=self.timeout) as response:
                         return self._read_stream(response)
-                    body = response.read().decode("utf-8")
+                else:
+                    with Spinner(f"Waiting for OpenAI-compatible endpoint ({self.model_name}), attempt {attempt+1}..."):
+                        with urllib.request.urlopen(req, timeout=self.timeout) as response:
+                            body = response.read().decode("utf-8")
                 break
             except urllib.error.HTTPError as e:
                 detail = e.read().decode("utf-8", "replace")[:500]
@@ -259,6 +322,12 @@ class OpenAIChatProvider(LLMProvider):
                     self.last_meta["used_thinking_channel"] = True
                     text = reasoning
                     break
+                    
+        print("\n" + "="*50)
+        print("=== LLM RESPONSE ===")
+        print("="*50)
+        print(text)
+        print("="*50 + "\n")
         return text
 
     def _read_stream(self, response) -> str:
@@ -288,10 +357,18 @@ class OpenAIChatProvider(LLMProvider):
                 finish_reason = choice.get("finish_reason") or finish_reason
                 delta = choice.get("delta") or {}
                 if delta.get("content"):
-                    content_parts.append(delta["content"])
+                    content = delta["content"]
+                    content_parts.append(content)
+                    import sys
+                    sys.stdout.write(content)
+                    sys.stdout.flush()
                 for field in self.REASONING_FIELDS:
                     if delta.get(field):
-                        reasoning_parts.append(delta[field])
+                        reason = delta[field]
+                        reasoning_parts.append(reason)
+                        import sys
+                        sys.stdout.write(reason)
+                        sys.stdout.flush()
 
         self.last_meta = {
             "prompt_eval_count": usage.get("prompt_tokens"),
@@ -305,4 +382,10 @@ class OpenAIChatProvider(LLMProvider):
         if not text.strip() and reasoning_parts:
             self.last_meta["used_thinking_channel"] = True
             text = "".join(reasoning_parts)
+            
+        print("\n" + "="*50)
+        print("=== LLM STREAM RESPONSE ===")
+        print("="*50)
+        print(text)
+        print("="*50 + "\n")
         return text

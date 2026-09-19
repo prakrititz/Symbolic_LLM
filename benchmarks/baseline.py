@@ -23,16 +23,12 @@ from FormalLLM.llm.provider import OllamaProvider, OpenAIChatProvider
 
 CODE_ROOT = "benchmarks/baseline_code"
 
-PROMPT = """You are given a formal specification in a refinement-calculus \
-specification language, together with its intent in English.
+PROMPT = """You are given a description of a function's intent in English.
 
 Intent:
 {nl}
 
-Formal specification:
-{spec}
-
-Write a single, self-contained Python function implementing this specification.
+Write a single, self-contained Python function implementing this description.
 
 Requirements:
 - Use exactly this signature: {signature}
@@ -68,8 +64,7 @@ PROMPT_NO_STDLIB = PROMPT.rstrip() + """
 - Do NOT import any module, and do NOT call any library function.
   In particular math.sqrt, math.pow, abs, min, max, sorted and the ** operator
   are all forbidden. Use only arithmetic (+ - * /), comparisons, assignment,
-  while loops and if statements -- the same constructs the specification
-  language provides.
+  while loops and if statements.
 """
 
 #: Constructs that mean the model took a library shortcut rather than
