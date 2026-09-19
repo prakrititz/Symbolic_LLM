@@ -28,7 +28,7 @@ def main():
     engine = RefinementEngine()
     
     # max_retries = 3 to avoid waiting too long if the model loops
-    refiner = AutomatedRefiner(engine, provider, max_retries=3)
+    refiner = AutomatedRefiner(engine, provider, max_retries=100)
     
     graph = RefinementGraph(spec)
     
